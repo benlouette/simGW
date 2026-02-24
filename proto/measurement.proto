@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package SKF.Measurement;
+
+/*******************************************************************************
+  *
+  * Enum part
+  *
+  */
+
+enum MeasurementType {
+    MeasurementTypeUnknown = 0;
+    /* overall */
+    MeasurementTypeAccelerationOverall = 1;
+    MeasurementTypeVelocityOverall = 2;
+    MeasurementTypeEnveloper3Overall = 3;
+    MeasurementTypeTemperatureOverall = 4;
+    /* twf */
+    MeasurementTypeAccelerationTwf = 5;
+    MeasurementTypeVelocityTwf = 6;
+    MeasurementTypeEnveloper3Twf = 7;
+}
+
+/*******************************************************************************
+  *
+  * Request
+  *
+  */
+
+message measurementType {
+    MeasurementType measurement_type = 1;
+}
+
+message measurementRequest {
+    repeated measurementType measurement = 1;
+}
+
+/*******************************************************************************
+  *
+  * Request
+  *
+  */
+
+message MetadataElo {
+    MeasurementType vibration_path = 1;
+    uint32 alarm = 2;
+    uint32 duration = 3;
+}
+
+/* create a over load message for future */
+message Metadata {
+    oneof kind {
+        MetadataElo elo_metadata = 1;
+    }
+}
+
+message MeasurementOveralls {
+    uint32 peak2peak = 1;
+    uint32 rms = 2;
+    uint32 peak = 3;
+    uint32 std = 4;
+    sint32 Mean = 5;
+}
+
+message MeasurementDataContent {
+    oneof kind {
+        bytes data_bytes = 1;
+        uint32 uint32_data = 2;
+        MeasurementOveralls measurement_overall = 3;
+    }
+}
+
+// Measurement is compose of specific metadata and data
+message MeasurementData {
+    optional Metadata metadata = 1;
+    MeasurementDataContent data = 2;
+}
+
+message CommonMetaData {
+    // Unix time (seconds)
+    uint64 time = 1;
+    // Hash of the configuration used for measurement
+    uint32 config_hash = 2;
+}
+
+message SendMeasurement {
+    optional CommonMetaData common_meta_data = 1;
+    repeated MeasurementData measurement_data = 2;
+}

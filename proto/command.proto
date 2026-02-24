@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package SKF.command;
+
+enum CommandType {
+    CommandTypeUnknown = 0;
+    CommandTypeCloseSession = 1;
+}
+
+message Command {
+    CommandType command = 1;
+}
