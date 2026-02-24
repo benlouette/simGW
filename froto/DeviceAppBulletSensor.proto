@@ -1,0 +1,62 @@
+/**
+ * @file    DeviceAppBulletSensor.proto
+ * @author  Xiaoyuan (Sean) Ma (ZZ2134)
+ * @date    2024-03-07
+ * @brief   Define all the application(s) required by BulletSensor (i.e., 
+            BLE communication between gateway and sensors)
+ * @details 
+ * Current version: 1.0a, appVer = 1
+ * ChangeLog:
+ * V1.0  | 2024-03-07 | Xiaoyuan (Sean) Ma | Draft (based on CloudApp.proto)
+ * V1.0a | 2024-03-13 | Xiaoyuan (Sean) Ma | Add file_notify_upload, image_block_upload, 
+ *                                           and image_block_retrieve to AppMessage.
+ */
+syntax="proto3";
+
+import "Froto.proto";
+import "SensingDataUpload.proto";
+import "FirmwareUpdateOverTheAir.proto";
+import "ConfigurationAndCommand.proto";
+import "Debug.proto";
+
+package SKFChina.App;
+
+message AppMessage {
+    // In the current design: field numbers 1 - 21 have been used, and 13, 17, 19 - 21 reserved.
+
+    // Application version: so far the supported version is 1
+    uint32                                      appVer = 1;
+    oneof _messages{
+        // Basic (sensing) data related
+        SKFChina.SensingDataUpload.DataUpload                   data_upload = 2;
+        SKFChina.SensingDataUpload.DataSelectionDisseminate     data_selection = 3;
+
+        // Configuration and command related
+        SKFChina.ConfigurationAndCommand.ConfigRetrieve         config_retrieve = 4;
+        SKFChina.ConfigurationAndCommand.ConfigHashUpload       config_hash_upload = 5;
+        SKFChina.ConfigurationAndCommand.SpecificConfigUpload   specific_config_upload = 6;
+        SKFChina.ConfigurationAndCommand.ConfigDisseminate      config_dissem = 7;
+        SKFChina.ConfigurationAndCommand.CommandDisseminate     command_dissem = 8;
+
+        // FUOTA related
+        SKFChina.FirmwareUpdateOverTheAir.VersionRetrieve               version_retrieve = 9;
+        SKFChina.FirmwareUpdateOverTheAir.CurrentVersionUpload          current_version_upload = 10;
+        SKFChina.FirmwareUpdateOverTheAir.LastFUOTAUpload               last_fuota_upload = 11;
+        SKFChina.FirmwareUpdateOverTheAir.FUOTANotifiyDisseminate       fuota_notify_dissem = 12;
+        SKFChina.FirmwareUpdateOverTheAir.FileNotifiyDisseminate        file_notify_dissem = 18;
+        // SKFChina.FirmwareUpdateOverTheAir.UpdateStatusUpload            fuota_status = 13;
+        SKFChina.FirmwareUpdateOverTheAir.ImageBlockDisseminate         image_block_dissem = 14;
+        SKFChina.FirmwareUpdateOverTheAir.ImageBlockRequest             image_block_request = 15;
+
+        // File upload
+        // SKFChina.FirmwareUpdateOverTheAir.FileNotifiyDisseminate        file_notify_upload = 19;
+        // SKFChina.FirmwareUpdateOverTheAir.ImageBlockDisseminate         image_block_upload = 20;
+        // SKFChina.FirmwareUpdateOverTheAir.ImageBlockRequest             image_block_retrieve = 21;
+
+        // Debug related
+        // SKFChina.Debug.DebugMessage                             debug_message = 17;
+
+        // Ack message (Froto layer)
+        SKFChina.Froto.FrotoAckMsg              ack = 16;
+    }
+}

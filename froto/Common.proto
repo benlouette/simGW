@@ -1,0 +1,615 @@
+/**
+ * @file    Common.proto
+ * @author  Xiaoyuan (Sean) Ma (ZZ2134)
+ * @date    2023-03-11
+ * @brief   Define common type for SKF China products
+ * @details
+ * Current version: 1.0u
+ * ChangeLog:
+ * V1.0  | 2023-03-11 | Xiaoyuan (Sean) Ma | Draft
+ * V1.0a | 2023-07-01 | Xiaoyuan (Sean) Ma | 1. Add AD22122_VIBRATION, TMP1075_TEMPERATURE, and 
+ *                                              SHT40_HUMIDITY_TEMPERATURE in SensorType
+ *                                           2. Add C_EFR32BG24_P_INSIGHTMETRO in HardwareType
+ *                                           3. Add PERCENTAGE in Unit
+ *                                           4. Add FileType
+ *                                           5. Add ACC_SENSOR_SAMPLE_PTS, TEMPERATURE_SENSOR_ENABLE,
+ *                                              and HUMIDITY_SENSOR_ENABLE in SpecificConfigItem
+ * V1.0b | 2023-07-03 | Xiaoyuan (Sean) Ma | 1. Add SPEED_TRIGGER_HZ and DIAMETER_WHEEL_CM in 
+ *                                              SpecificConfigItem.
+ * V1.0c | 2023-07-07 | Xiaoyuan (Sean) Ma | 1. fSchedulerConfigItem added.
+ * V1.0d | 2023-07-12 | Xiaoyuan (Sean) Ma | 1. Add enum AlarmAndNotify.
+ *                                           2. Add BATTERY_LOW_ALARM_THRESHOLD_PERCENTAGE, 
+ *                                              BATTERY_FULL_NOTIFY_THRESHOLD_PERCENTAGE in
+ *                                              enum SpecificConfigItem.
+ * V1.0e | 2023-07-27 | Xiaoyuan (Sean) Ma | 1. Add HIL node in HardwareType and ProductType.
+ * V1.0f | 2023-08-03 | Xiaoyuan (Sean) Ma | 1. Add some comments in ProductType.
+ * V1.0g | 2023-08-15 | Xiaoyuan (Sean) Ma | 1. Add ROTATION_SPEED in MeasurementType.
+ *                                           2. Add KMPERH, MPERS, RPM, and Hz in Unit.
+ * V1.0h | 2023-08-24 | Xiaoyuan (Sean) Ma | 1. Add Dimension.
+ * V1.0i | 2023-11-23 | Xiaoyuan (Sean) Ma | 1. Add communication related metrics (i.e., 
+ *                                              CELLULAR_RSRP_CURRENT, CELLULAR_RSRP_CURRENT, 
+ *                                              CELLULAR_RSRQ_CURRENT, CELLULAR_SINR_CURRENT, 
+ *                                              CELLULAR_RSSI_CURRENT, NB_IOT_CELEVEL_CURRENT, 
+ *                                              and BLE_RSSI_CURRENT) to MeasurementType.
+ *                                           2. Add battery related metrics (i.e., 
+ *                                              STATE_OF_HEALTH_CURRENT, AVERAGE_TIME_TO_FULL,
+ *                                              AVERAGE_TIME_TO_EMPTY, 
+ *                                              BATTERY_SURFACE_TEMPERATURE_CURRENT, 
+ *                                              and BATTERY_MNGMENT_IC_TEMPERATURE_CURRENT) to 
+ *                                              MeasurementType.
+ *                                           3. Add BQ34210_BATTERY, EC600_CELLULAR, and 
+ *                                              EFR32BG24_2_4GHZ_RADIO to SensorType.
+ *                                           4. Rename "VOLTAGE" to "VOLT" in Unit.
+ *                                           5. Add time related units (TIME_SECOND, TIME_MINUTE, 
+ *                                              TIME_HOUR, and TIME_MILLISECOND) to Unit.
+ *                                           6. Add MILLIVOLT to Unit.
+ *                                           7. Add DB and DBM to Unit.
+ *                                           8. Add CLOUD_BACKEND_URL and CLOUD_BACKEND_PORT to 
+ *                                              SpecificConfigItem.
+ * V1.0j | 2023-12-12 | Xiaoyuan (Sean) Ma | 1. Add WORK_MODE to SpecificConfigItem.
+ *                                           2. Add WorkMode.
+ * V1.0k | 2024-03-06 | Xiaoyuan (Sean) Ma | 1. Add FLIGHT_FACTORY_RESET_MODE in WorkMode.
+ *                                           2. Add IMMEDIATE_REGULAR_MEASUREMENT in Command.
+ *                                           3. Add C_NRF52840_P_BULLETNODE and C_AM6231_P_BULLETGW
+ *                                              in HardwareType.
+ *                                           4. Add BULLET_NODE and BULLET_GATEWAY in ProductType.
+ *                                           5. Add NRF52_2_4GHZ_RADIO in SensorType.
+ *                                           6. Add GATEWAY_CONFIG_FILE, SENSOR_CONFIG_FILE, 
+ *                                              FUOTA_FILE_MCU_BOOT, and FUOTA_FILE_RAW in FileType.
+ *                                           7. Add KBPS (i.e., kbps) in Unit to represent a unit of 
+ *                                              communication data rate.
+ *                                           8. Add 30 - 111 to SpecificConfigItem.
+ *                                           9. Add IIM4235X_VIBRATION, MMC56X3_MAG, and 
+ *                                              NTC_TEMPERATURE to SensorType.
+ *                                           10. Add 43 - 62 to MeasurementType.
+ *                                           11. Add CLEAR_TEMPERATURE_HISTORY to Command.
+ *                                           12. Revise BATTERY_LOW_BEARING_ANOMALY_EVENT to 
+ *                                               BEARING_ANOMALY_EVENT in AlarmAndNotify.
+ * V1.0l | 2024-03-14 | Xiaoyuan (Sean) Ma | 1. Revise BEARING_DIAMETER_MM to BORE_DIAMETER_MM in 
+ *                                              SpecificConfigItem.
+ * V1.0m | 2024-03-16 | Xiaoyuan (Sean) Ma | 1. Add INSIGHT_T to ProductType.
+ *                                           2. Add LATEST_CONFIG_TIME to SpecificConfigItem.
+ * V1.0n | 2024-05-20 | Xiaoyuan (Sean) Ma | 1. Add WAVEDATA_ACQ_PERIOD_S and 
+ *                                              WAVEDATA_ACQ_REF_STARTTIME_S to SpecificConfigItem.
+ * V1.0o | 2024-06-12 | Xiaoyuan (Sean) Ma | 1. Add MMPERS to Unit.
+ * V1.0p | 2024-11-19 | Xiaoyuan (Sean) Ma | 1. Add CloudBackendMqttSecType
+ *                                           2. Add NTP_SERVER_SETTING, NTP_SERVER_URL, 
+ *                                              CLOUD_BACKEND_MQTT_SECURITY_TYPE, CLOUD_BACKEND_MQTT_URL,
+ *                                              CLOUD_BACKEND_MQTT_PORT, DHCP_ENABLE, STATIC_IP_ADDR,
+ *                                              GATEWAY_IP_ADDR, NETMASK, DNSSERVER_ADDR, BAUDRATE_SLAVE,
+ *                                              ADDR_SLAVE, PARITY_SLAVE, STOP_SLAVE, REGISTER_MODE,
+ *                                              and CHILDREN to SpecificConfigItem.
+ * V1.0q | 2025-01-13 | Xiaoyuan (Sean) Ma | 1. Add DESCRIPTION to SpecificConfigItem.
+ * V1.0r | 2025-05-12 | Xiaoyuan (Sean) Ma | 1. Add RANGE_32G, RANGE_64G, RANGE_15G, RANGE_30G, and RANGE_60G 
+ *                                              to Range.
+ *                                           2. Add BULLET_NODE_PRO and BULLET_GATEWAY_PRO to ProductType.
+ *                                           3. Add C_NRF52840_P_BULLETNODEPRO and C_AM6231_P_BULLETGWPRO to 
+ *                                              HardwareType.
+ *                                           4. Add ADXL382_VIBRATION to SensorType
+ * V1.0s | 2025-07-02 | Xiaoyuan (Sean) Ma | 1. Add SET_REMAINING_BATTERY_VOLUME to Command.
+ * V1.0t | 2025-10-15 | Xiaoyuan (Sean) Ma | 1. Add TEMPERATURE_RESOLUTION_CDGREE to SpecificConfigItem.
+ * V1.0u | 2025-10-23 | Xiaoyuan (Sean) Ma | 1. Add CLOSE_SESSION to Command.
+ *                                           2. Add VIBRATION_ACC_STATUS_WAVE to MeasurementType.
+ */
+
+syntax="proto3";
+package SKFChina.Common;
+
+// Type of measurement
+enum MeasurementType {
+    // 0 - 63 used
+    UNKNOWN_MEASUREMENT_TYPE = 0;
+
+    // Vibration
+    VIBRATION_ACC_WAVE = 1;
+    VIBRATION_ENV2_WAVE = 2;
+    VIBRATION_ENV3_WAVE = 3;
+    VIBRATION_VELOCITY_WAVE = 4;
+    VIBRATION_ACC_STATUS_WAVE = 63;
+    VIBRATION_ACC_P2P = 5;
+    VIBRATION_ACC_RMS = 6;
+    VIBRATION_ENV2_P2P = 7;
+    VIBRATION_ENV2_RMS = 8;
+    VIBRATION_ENV3_P2P = 9;
+    VIBRATION_ENV3_RMS = 10;
+    VIBRATION_VELOCITY_P2P = 11;
+    VIBRATION_VELOCITY_RMS = 12;
+
+    // Rotation speed
+    ROTATION_SPEED = 31;
+
+    // Enviromental temperature
+    ENVIROMENTAL_TEMPERATURE_CURRENT = 13;
+    ENVIROMENTAL_TEMPERATURE_MAX = 14;
+    ENVIROMENTAL_TEMPERATURE_MIN = 15;
+    ENVIROMENTAL_TEMPERATURE_HISTORY = 16;
+
+    // Enviromental humidity
+    ENVIROMENTAL_HUMIDITY_CURRENT = 17;
+    ENVIROMENTAL_HUMIDITY_MAX = 18;
+    ENVIROMENTAL_HUMIDITY_MIN = 19;
+    ENVIROMENTAL_HUMIDITY_HISTORY = 20;
+
+    // Board temperature
+    BOARD_TEMPERATURE_CURRENT = 21;
+    BOARD_TEMPERATURE_MAX = 22;
+    BOARD_TEMPERATURE_MIN = 23;
+    BOARD_TEMPERATURE_HISTORY = 24;
+
+    // Board humidity
+    BOARD_HUMIDITY_CURRENT = 25;
+    BOARD_HUMIDITY_MAX = 26;
+    BOARD_HUMIDITY_MIN = 27;
+    BOARD_HUMIDITY_HISTORY = 28;
+
+    // Battery
+    VOLTAGE_CURRENT = 29;
+    REMAINING_VOLUME = 30; // namely RSOC (relative state-of-charge)
+    STATE_OF_HEALTH_CURRENT = 37;
+    AVERAGE_TIME_TO_FULL = 38;
+    AVERAGE_TIME_TO_EMPTY = 39;
+    BATTERY_SURFACE_TEMPERATURE_CURRENT = 40;
+    BATTERY_MNGMENT_IC_TEMPERATURE_CURRENT = 41;
+
+    // Communication
+    CELLULAR_RSRP_CURRENT = 32;
+    CELLULAR_RSRQ_CURRENT = 33;
+    CELLULAR_SINR_CURRENT = 34;
+    CELLULAR_RSSI_CURRENT = 35;
+    NB_IOT_CELEVEL_CURRENT = 36;
+    BLE_RSSI_CURRENT = 42;
+
+    // Advanced algorithm
+    ADVANCED_ALGO_MACHINE_RUN_CODE          = 43;
+    ADVANCED_ALGO_MACHINE_CONDITON_CODE     = 44;
+    ADVANCED_ALGO_ALARM_CODE                = 45;
+    ADVANCED_ALGO_RMS_MAG_PRE               = 46;
+    ADVANCED_ALGO_RMS_VIB_PRE               = 47;
+    ADVANCED_ALGO_EST_RPM_START             = 48;
+    ADVANCED_ALGO_EST_RPM_END               = 49;
+    ADVANCED_ALGO_VEL_OV                    = 50;
+    ADVANCED_ALGO_VEL_RSH                   = 51;
+    ADVANCED_ALGO_VEL_MTR                   = 52;
+    ADVANCED_ALGO_VEL_FAN                   = 53;
+    ADVANCED_ALGO_VEL_PUMP                  = 54;
+    ADVANCED_ALGO_ENV_OV                    = 55;
+    ADVANCED_ALGO_ENV_BPFI                  = 56;
+    ADVANCED_ALGO_ENV_BPFO                  = 57;
+    ADVANCED_ALGO_ENV_BSF                   = 58;
+    ADVANCED_ALGO_ENV_FTF                   = 59;
+    ADVANCED_ALGO_ENV_RSH                   = 60;
+    ADVANCED_ALGO_ACC_OV                    = 61;
+    ADVANCED_ALGO_ACC_GEAR                  = 62;
+}
+
+enum Dimension {
+    // Mask
+    // 0, 1, 2, 4 used
+    UNKNOWN_DIMENSION = 0;
+    DIMENSION_X = 1;    // e.g., roll
+    DIMENSION_Y = 2;    // e.g., pitch
+    DIMENSION_Z = 4;    // e.g., yaw
+}
+
+// The alarm events
+enum AlarmAndNotify {
+    // 0 - 8 used
+    UNKNOWN_ALARM_EVENT             = 0;
+    // Alarm for temperature is higher than TEMPERATURE_ALARM_THRESHOLD_CDGREE
+    TEMPERATURE_HIGH_ALARM_EVENT    = 1;
+    // Alarm for relative humidity is higher than HUMIDITY_ALARM_THRESHOLD_PERCENTAGE
+    HUMIDITY_HIGH_ALARM_EVENT = 2;
+    // Alarm for acceleration in X direction is higher than ACC_SENSOR_ALARM_X_THRESHOLD_G
+    ACC_X_HIGH_ALARM_EVENT    = 3;
+    // Alarm for acceleration in Y direction is higher than ACC_SENSOR_ALARM_Y_THRESHOLD_G
+    ACC_Y_HIGH_ALARM_EVENT    = 4;
+    // Alarm for acceleration in Z direction is higher than ACC_SENSOR_ALARM_Z_THRESHOLD_G
+    ACC_Z_HIGH_ALARM_EVENT    = 5;
+    // Alarm for remaining battery capacity is lower than BATTERY_LOW_ALARM_THRESHOLD_PERCENTAGE
+    BATTERY_LOW_ALARM_EVENT   = 6;
+    // Alarm for anomaly detected
+    BEARING_ANOMALY_EVENT     = 7;
+
+    // Notification for remaining battery capacity is full
+    // (i.e., higher than than BATTERY_FULL_NOTIFY_THRESHOLD_PERCENTAGE)
+    BATTERY_FULL_NOTIFY_EVENT = 8;
+}
+
+// Sensor: the hardware type
+enum SensorType {
+    // 0 - 12 used
+    UNKNOWN_SENSOR              = 0;
+    LIS2DW_VIBRATION            = 1;
+    AD22122_VIBRATION           = 2;
+    IIM4235X_VIBRATION          = 9;
+    TMP1075_TEMPERATURE         = 3;
+    NTC_TEMPERATURE             = 11;
+    SHT40_HUMIDITY_TEMPERATURE  = 4;
+    BQ34210_BATTERY             = 5;
+    EC600_CELLULAR              = 6;
+    EFR32BG24_2_4GHZ_RADIO      = 7;
+    NRF52_2_4GHZ_RADIO          = 8;
+    MMC56X3_MAG                 = 10;
+    ADXL382_VIBRATION           = 12;
+    // TODO: Add sensor
+}
+
+// Hardware type: 
+// chip information ("C") + platform information ("P")
+enum HardwareType {
+    // 0 - 5 used
+    UNKNOWN_HARDWARE            = 0;
+    C_NRF52840_P_DEVKIT         = 1;
+    C_EFR32BG24_P_INSIGHTMETRO  = 2;
+    C_BCM2711_P_HIL_NODE        = 3;
+    C_NRF52840_P_BULLETNODE     = 4;
+    C_AM6231_P_BULLETGW         = 5;
+    C_NRF52840_P_BULLETNODEPRO  = 6;
+    C_AM6231_P_BULLETGWPRO      = 7;
+    // TODO: Add hardware platform
+}
+
+// Product type
+enum ProductType {
+    // 0 - 9 used
+    UNKNOWN_PRODUCT             = 0;
+    // name of INSIGHTMETRO: "INSIGHTMETRO"
+    INSIGHTMETRO                = 1;
+    // name of IMX_1_NB: "IMX_1_NB"
+    IMX_1_NB                    = 2;
+    // name of IMX_1_NB_PRO: "IMX_1_NB_PRO"
+    IMX_1_NB_PRO                = 3;
+    // name of HIL_NODE: "HIL_NODE"
+    HIL_NODE                    = 4;
+    // name of BULLET_NODE: "BULLET_NODE"
+    BULLET_NODE                 = 5;
+    // name of BULLET_GATEWAY: "BULLET_GATEWAY"
+    BULLET_GATEWAY              = 6;
+    // name of INSIGHT_T: "INSIGHT_T"
+    INSIGHT_T                   = 7;
+    // name of BULLET_NODE_PRO: "BULLET_NODE_PRO"
+    BULLET_NODE_PRO             = 8;
+    // name of BULLET_GATEWAY_PRO: "BULLET_GATEWAY_PRO"
+    BULLET_GATEWAY_PRO          = 9;
+    // TODO: Add product
+}
+
+// Unit: the unit of the uploading data
+enum Unit {
+    // 0 - 23 used
+    UNKNOWN_UNIT = 0;
+
+    // Acceleration
+    MPERS2 = 1; // m/s2
+    GEE = 2;    // g
+
+    // Temperature
+    FDEGREE = 3;// Fahrenheit 
+    CDEGREE = 4;// Celsius 
+
+    // Voltage
+    VOLT = 5;// V
+    MILLIVOLT = 15;// mV
+
+    // Energy and power
+    COULOMB = 6;// Coulomb
+    JOULE = 7;  // Joule
+    MAH = 8;    // Milliamp hours
+
+    // Speed and frequency
+    KMPERH = 11; // km/h
+    MPERS = 12; // m/s
+    RPM = 13; // rpm
+    HZ = 14; // Hz
+
+    // Velocity
+    MMPERS = 23; // mm/s
+
+    // Time
+    TIME_SECOND = 16;
+    TIME_MINUTE = 17;
+    TIME_HOUR = 18;
+    TIME_MILLISECOND = 19;
+
+    // Ratio
+    DB = 20;
+    DBM = 21;
+
+    // Communication
+    KBPS = 22; // kbps
+
+    // Others
+    NOUNIT = 9; // No unit, e.g., the reading from an ADC
+    PERCENTAGE = 10; // For relative values, e.g., relative humidity
+}
+
+// Range: the range of sensor
+// So far, only range of accelerometer is enumerated.
+enum Range {
+    // 0 - 6, 15, 30, 60 used
+    UNKNOWN_RANGE = 0;
+    RANGE_2G = 1; // +-2 G
+    RANGE_4G = 2; // +-4 G
+    RANGE_8G = 3; // +-8 G
+    RANGE_16G = 4; // +-16 G
+    RANGE_32G = 5; // +-32 G
+    RANGE_64G = 6; // +-64 G
+    RANGE_15G = 15; // +-15 G
+    RANGE_30G = 30; // +-30 G
+    RANGE_60G = 60; // +-60 G
+}
+
+// Format: the format of the (before encoded and after decoded) data (e.g., uint16_t or float32_t)
+// Here the endianess should be assigned.
+// Given a value 0xaabbccdd, for little endian, memory from low address to high is 0xdd 0xcc 0xbb 0xaa
+// for big endian, memory from low address to high is 0xaa 0xbb 0xcc 0xdd
+enum Format {
+    // 0 - 8 used
+    UNKNOWN_FORMAT = 0;
+
+    // Integers
+    FORMAT_UINT16 = 1; // uint16_t, unsigned, bit width 2 bytes
+    FORMAT_INT16 = 2; // int16_t, signed, bit width 2 bytes
+    FORMAT_UINT32 = 3; // uint32_t, unsigned, bit width 4 bytes
+    FORMAT_INT32 = 4; // int32_t, signed, bit width 4 bytes
+    FORMAT_UINT8 = 5; // uint8_t, unsigned, bit width 1 byte
+    FORMAT_INT8 = 6; // int8_t, signed, bit width 1 byte
+
+    // Values with decimal fractions
+    FORMAT_FLOAT32 = 7; // float32_t, signed, bit width 4 bytes
+    FORMAT_DOUBLE64 = 8; // double64_t, signed, bit width 8 bytes
+}
+
+// Encryption: what encryption is adopted for the @p Data.data
+enum Encryption {
+    // 0 - 1 used
+    UNKNOWN_ENCRYPTION = 0;
+
+    NO_ENCRYPTION = 1;
+    // TODO: Add encryption manner
+}
+
+// Communication type
+enum CommunicationType {
+    // 0 - 5 used
+    UNKNOWN_COMM                = 0;
+    BLECONNECTION_COMM          = 1;
+    BLEMESH_COMM                = 2;
+    LTE_COMM                    = 3;
+    NBIOT_COMM                  = 4;
+    THREAD_COMM                 = 5;
+    // TODO: Add communication
+}
+
+// Communication type
+enum FUOTAType {
+    // 0 - 2 used
+    UNKNOWN_FUOTATYPE           = 0;
+    DIFF                        = 1;
+    WHOLE                       = 2;
+}
+
+// File type
+enum FileType {
+    // 0 - 5 used
+    UNKNOWN_FILE                = 0;
+    CERT_FILE                   = 1;
+    GATEWAY_CONFIG_FILE         = 2;
+    SENSOR_CONFIG_FILE          = 3;
+    FUOTA_FILE_MCU_BOOT         = 4; // The file to be updated used by MCU Boot
+    FUOTA_FILE_RAW              = 5; // Raw .bin file to be updated
+    // TODO: Add file
+}
+
+// The fScheduler configuration item of sensor
+enum fSchedulerConfigItem {
+    // 0 - 6 used
+
+    // fScheduler
+    // At least M sets of valid data required over N days
+    FSCHEDULER_M             = 0;  // The expected items of data every N days
+    FSCHEDULER_N             = 1;  // The period (in day).
+    // (no time zone, UTC+0, cloud guarantees second must be zero): The start
+    // of the period. (Default 2022-07-15 00:00:00 UTC+0)
+    FSCHEDULER_NSTARTMOMENT  = 2;  
+    // Next 10 wake-up (to sense) moments. Follow the last update if failed 
+    // to update the WS-Array. Follow the built-in rule if nothing is valid 
+    // in the WS-Array. The built-in rule is to wake up (to sense) according
+    // to the preset WS moment if M items of data in N days are not met. 
+    // (Default null)
+    FSCHEDULER_WSARRAY       = 3; // (no time zone, UTC+0)
+    // To mark the MUSTwake-up moments restored in WS-Array. (Default null)
+    FSCHEDULER_WSSTAR_ARRAY  = 4; // (no time zone, UTC+0)
+    // To describe the sensing attribute (e.g., sample rate, sample duration,
+    // etc.) corresponding to WSArray. This array is application-dependent.
+    FSCHEDULER_WSDESC_ARRAY  = 5;
+    // Next 5 wake-up (to communicate) moments. Follow the last update if 
+    // failed to update the WC-Array; otherwise, the preset WC moment is
+    // applied. (Default null) (MAX interval: 3 days)
+    FSCHEDULER_WCARRAY       = 6;  //(no time zone, UTC+0)
+}
+
+// The configuration item of sensor
+enum SpecificConfigItem {
+    // 0 - 12, 20 - 132 used
+    ACC_SENSOR_SAMPLE_RATE_HZ   = 0;
+    ACC_SENSOR_X_ENABLE         = 1;
+    ACC_SENSOR_Y_ENABLE         = 2;
+    ACC_SENSOR_Z_ENABLE         = 3;
+    ACC_SENSOR_AXIS             = 49;
+    ACC_SENSOR_RANGE_G          = 4;
+    ACC_SENSOR_ALARM_X_THRESHOLD_G  = 6;
+    ACC_SENSOR_ALARM_Y_THRESHOLD_G  = 7;
+    ACC_SENSOR_ALARM_Z_THRESHOLD_G  = 8;
+    ACC_SENSOR_SAMPLE_PTS       = 20;
+
+    TEMPERATURE_SAMPLE_PERIOD_S = 9;
+    TEMPERATURE_ALARM_THRESHOLD_CDGREE  = 10;
+    TEMPERATURE_SENSOR_ENABLE   = 21;
+    TEMPERATURE_RESOLUTION_CDGREE = 132;
+
+    HUMIDITY_SAMPLE_PERIOD_S = 11;
+    HUMIDITY_ALARM_THRESHOLD_PERCENTAGE = 12;
+    HUMIDITY_SENSOR_ENABLE   = 22;
+
+    SPEED_TRIGGER_HZ         = 23;
+
+    DIAMETER_WHEEL_CM        = 24;
+    BORE_DIAMETER_MM         = 85;
+
+    BATTERY_LOW_ALARM_THRESHOLD_PERCENTAGE      = 25;
+    BATTERY_FULL_NOTIFY_THRESHOLD_PERCENTAGE    = 26;
+
+    CLOUD_BACKEND_URL        = 27;
+    CLOUD_BACKEND_PORT       = 28;
+    CLOUD_BACKEND_MQTT_USERNAME = 110;
+    CLOUD_BACKEND_MQTT_PASSWORD = 111;
+    NTP_SERVER_SETTING       = 115;
+    NTP_SERVER_URL           = 116;
+    CLOUD_BACKEND_MQTT_SECURITY_TYPE = 117;
+    CLOUD_BACKEND_MQTT_URL           = 118;
+    CLOUD_BACKEND_MQTT_PORT          = 119;
+    DHCP_ENABLE              = 120;
+    STATIC_IP_ADDR           = 121;
+    GATEWAY_IP_ADDR          = 122;
+    NETMASK                  = 123;
+    DNSSERVER_ADDR           = 124;
+
+    WORK_MODE                = 29;
+
+    TX_POWER_BLE_ADV_DBM     = 30;
+    TX_POWER_BLE_AUX_ADV_DBM = 31;
+    DATA_RATE_BLE_AUX_ADV_KBPS= 32; // kbps
+    TX_POWER_BLE_CONN_DBM    = 33;
+    DATA_RATE_BLE_CONN_KBPS  = 34; // kbps
+
+    CURRENT_TIME = 35;
+    LATEST_CONFIG_TIME = 112;
+
+    GATEWAY_ADDR = 36;
+
+    QUICKPOLLING_PERIOD_S           = 37;
+    REGULARSENSING_PERIOD_S         = 38;
+    COMMUNICATION_PERIOD_S          = 39;
+    QUICKPOLLING_REF_STARTTIME_S    = 40;
+    REGULARSENSING_REF_STARTTIME_S  = 41;
+    COMMUNICATION_REF_STARTTIME_S   = 42;
+    WAVEDATA_ACQ_PERIOD_S           = 113;
+    WAVEDATA_ACQ_REF_STARTTIME_S    = 114;
+
+    PRE_ACQ_VIB_FS_HZ               = 43;
+    PRE_ACQ_VIB_N                   = 44;
+    PRE_ACQ_VIB_AXIS_ACQ_EVAL       = 45;
+    PRE_ACQ_VIB_RANGE               = 46;
+    PRE_ACQ_MAG_FS_HZ               = 47;
+    PRE_ACQ_MAG_N                   = 48;
+    PRE_ACQ_MAG_AXIS_ACQ_EVAL       = 50;
+    ACQ_MAG_FS_HZ                   = 51;
+    ACQ_MAG_N                       = 52;
+    ACQ_MAG_AXIS_ACQ_EVAL           = 53;
+
+    FS_COEF                         = 54;
+    GEE_COEF                        = 55;
+    V_COEF                          = 56;
+    MEAS_POSITION                   = 57;
+    MEAS_LOAD                       = 58;
+    MEAS_AXIS_VIB                   = 59;
+    MEAS_AXIS_MAG                   = 60;
+    VIB_START_FG                    = 61;
+    VIB_RMS_START_TL                = 62;
+    MAG_START_FG                    = 63;
+    MAG_RMS_START_TL                = 64;
+    MAG_STABLE_FG                   = 65;
+    MAG_RMS_VAR_TH                  = 66;
+    RPM_VAR_RANGE                   = 67;
+    DEC_LOGIC_TEMP_M                = 68;
+    DEC_LOGIC_TEMP_N                = 69;
+    DEC_LOGIC_LEARN_NUM_TEMP        = 70;
+    DEC_LOGIC_VIB_M                 = 71;
+    DEC_LOGIC_VIB_N                 = 72;
+    DEC_LOGIC_LEARN_NUM_VIB         = 73;
+    DEC_LOGIC_LEARN_NUM_MAG         = 74;
+    FUNC_ANOM_TEMP                  = 75;
+    FUNC_ANOM_OV                    = 76;
+    FUNC_ANOM_MECH                  = 77;
+    FUNC_ANOM_BRG                   = 78;
+    FUNC_ANOM_LUB                   = 79;
+    FUNC_ANOM_MTR                   = 80;
+    FUNC_ANOM_GEAR                  = 81;
+    FUNC_ANOM_FAN                   = 82;
+    FUNC_ANOM_PUMP                  = 83;
+    ASSET_LEVEL                     = 84;
+    FLEX_TYPE                       = 86;
+    RUN_SPEED_RPM                   = 87;
+    BRG_INFO_BPFO                   = 88;
+    BRG_INFO_BPFI                   = 89;
+    BRG_INFO_BSF                    = 90;
+    BRG_INFO_FTF                    = 91;
+    MTR_INFO_FL                     = 92;
+    MTR_INFO_BAR                    = 93;
+    GEAR_INFO_TOOTH                 = 94;
+    FAN_INFO_BLADE                  = 95;
+    PUMP_INFO_VANE                  = 96;
+    TEMP_OV_ALERT_CDEGREE           = 97;
+
+    ACC_OV_ALERT                    = 98;
+    ACC_OV_ALARM                    = 99;
+    ACC_HAL_ALERT                   = 100;
+    ACC_HAL_ALARM                   = 101;
+    VEL_OV_ALERT                    = 102;
+    VEL_OV_ALARM                    = 103;
+    VEL_HAL_ALERT                   = 104;
+    VEL_HAL_ALARM                   = 105;
+    ENV_OV_ALERT                    = 106;
+    ENV_OV_ALARM                    = 107;
+    ENV_HAL_ALERT                   = 108;
+    ENV_HAL_ALARM                   = 109;
+
+    BAUDRATE_SLAVE                  = 125;
+    ADDR_SLAVE                      = 126;
+    PARITY_SLAVE                    = 127;
+    STOP_SLAVE                      = 128;
+    REGISTER_MODE                   = 129;
+    DESCRIPTION                     = 131;
+
+    CHILDREN                        = 130;
+}
+
+enum CloudBackendMqttSecType {
+    // 0 - 3 used
+    MQTT_SEC_TYPE_NO_SECURITY = 0;      // 0: no security for debug
+    MQTT_SEC_TYPE_USER_AND_PSW = 1;     // 1: username and password
+    MQTT_SEC_TYPE_TLS = 2;              // 2: TLS
+    MQTT_SEC_TYPE_USER_AND_PSW_TLS = 3; // 3: username and password with TLS
+}
+
+// The work mode of sensor
+enum WorkMode {
+    // 0 - 4 used
+    FLIGHT_MODE = 0;
+    STANDBY_MODE = 1;
+    NORMAL_MODE = 2;
+    FCT_MODE = 3;
+    FLIGHT_FACTORY_RESET_MODE = 4;
+}
+
+// The configuration item of sensor
+enum Command {
+    // 0 - 7 used
+    IMMEDIATE_TEMPERATURE_MEASUREMENT = 0;
+    IMMEDIATE_VIBRATION_MEASUREMENT = 1;
+    IMMEDIATE_QUICK_LED_BLINK = 2;
+    IMMEDIATE_SLOW_LED_BLINK = 3;
+    IMMEDIATE_REGULAR_MEASUREMENT = 4;
+    CLEAR_TEMPERATURE_HISTORY = 5;
+    SET_REMAINING_BATTERY_VOLUME = 6;
+    CLOSE_SESSION = 7;
+}
+
+// Measurement description (for fScheduler)
+// Deprecated.
+enum Wsdesc {
+    // 0 used
+    NORMAL_MEASUREMENT = 0;
+    // TODO: add the description
+}
