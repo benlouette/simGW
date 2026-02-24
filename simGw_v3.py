@@ -85,6 +85,9 @@ class BleCycleWorker:
 	def run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float) -> None:
 		self._call_soon(self._run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout))
 
+	def run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str) -> None:
+		self._call_soon(self._run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action))
+
 	def _format_rx_payload(self, payload: bytes) -> str:
 		try:
 			message = DeviceAppBulletSensor_pb2.AppMessage()
@@ -112,6 +115,323 @@ class BleCycleWorker:
 		if len(payload) <= max_len:
 			return payload.hex(" ")
 		return payload[:max_len].hex(" ") + f" ... ({len(payload)} bytes)"
+
+
+	async def _run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str) -> None:
+		address_prefix = address_prefix.upper()
+		self.ui_queue.put(("tile_update", tile_id, {"status": f"Manual: {action} / scanning..."}))
+		self.ui_queue.put(("tile_update", tile_id, {"checklist": {"waiting_connection": "in_progress"}}))
+		matched_device = {"value": None}
+		found_event = asyncio.Event()
+
+		def _on_device_found(device, _advertisement_data):
+			if not device.address:
+				return
+			if device.address.upper().startswith(address_prefix):
+				if not found_event.is_set():
+					matched_device["value"] = device
+					found_event.set()
+
+		scanner = BleakScanner(_on_device_found)
+		await scanner.start()
+		try:
+			try:
+				await asyncio.wait_for(found_event.wait(), timeout=scan_timeout)
+			except asyncio.TimeoutError:
+				self.ui_queue.put(("tile_update", tile_id, {"status": "Not found", "address": "—"}))
+				return
+		finally:
+			await scanner.stop()
+
+		matched = matched_device["value"]
+		if not matched:
+			self.ui_queue.put(("tile_update", tile_id, {"status": "Not found", "address": "—"}))
+			return
+
+		self.ui_queue.put(("tile_update", tile_id, {"status": f"Manual: {action} / connecting...", "address": matched.address}))
+		client = BleakClient(matched.address)
+		rx_queue = []
+		rx_event = asyncio.Event()
+
+		def _on_notify(_sender: int, data: bytearray) -> None:
+			try:
+				rx_queue.append(bytes(data))
+				rx_event.set()
+			except Exception:
+				pass
+
+		async def _wait_next_rx(timeout_s: float) -> bytes:
+			loop = asyncio.get_running_loop()
+			end_time = loop.time() + timeout_s
+			while True:
+				if rx_queue:
+					return rx_queue.pop(0)
+				rx_event.clear()
+				if rx_queue:
+					return rx_queue.pop(0)
+				remaining = end_time - loop.time()
+				if remaining <= 0:
+					raise asyncio.TimeoutError()
+				await asyncio.wait_for(rx_event.wait(), timeout=remaining)
+
+		next_seq_no = 1
+		def _alloc_seq() -> int:
+			nonlocal next_seq_no
+			v = next_seq_no
+			next_seq_no += 1
+			return v
+
+		async def _write_app_message(app_msg) -> bytes:
+			payload = app_msg.SerializeToString()
+			await client.write_gatt_char(self.uart_rx_uuid, payload)
+			self.ui_queue.put(("tile_update", tile_id, {"status": f"TX {self._pb_message_type(payload)} ({len(payload)} B)"}))
+			return payload
+
+		def _safe_parse_app(payload: bytes):
+			msg = DeviceAppBulletSensor_pb2.AppMessage()
+			msg.ParseFromString(payload)
+			return msg
+
+		def _mk_header() -> Froto_pb2.FrotoHeader:
+			return Froto_pb2.FrotoHeader(
+				version=1,
+				is_up=False,
+				message_seq_no=_alloc_seq(),
+				time_to_live=3,
+				primitive_type=Froto_pb2.SIMPLE_DISSEMINATE,
+				message_type=Froto_pb2.NORMAL_MESSAGE,
+				total_block=1,
+			)
+
+		async def _send_config_time() -> None:
+			current_time_ms = int(time.time() * 1000)
+			config_pair = ConfigurationAndCommand_pb2.ConfigPair(
+				specific_config_item=Common_pb2.CURRENT_TIME,
+				time_config_content=ConfigurationAndCommand_pb2.TimeArray(
+					time=[ConfigurationAndCommand_pb2.TimeArrayElement(time=current_time_ms)]
+				),
+			)
+			config_dissem = ConfigurationAndCommand_pb2.ConfigDisseminate(
+				header=_mk_header(),
+				appVer=1,
+				product=Common_pb2.UNKNOWN_PRODUCT,
+				config_pair=[config_pair],
+			)
+			await _write_app_message(DeviceAppBulletSensor_pb2.AppMessage(appVer=1, config_dissem=config_dissem))
+
+		async def _send_version_retrieve() -> None:
+			msg = FirmwareUpdateOverTheAir_pb2.VersionRetrieve(
+				header=_mk_header(),
+				appVer=1,
+				payload=FirmwareUpdateOverTheAir_pb2.CURRENT_VERSION,
+			)
+			await _write_app_message(DeviceAppBulletSensor_pb2.AppMessage(appVer=1, version_retrieve=msg))
+
+		async def _send_config_hash_retrieve() -> None:
+			msg = ConfigurationAndCommand_pb2.ConfigRetrieve(
+				header=_mk_header(),
+				appVer=1,
+				payload=ConfigurationAndCommand_pb2.CURRENT_CONFIG_HASH,
+			)
+			await _write_app_message(DeviceAppBulletSensor_pb2.AppMessage(appVer=1, config_retrieve=msg))
+
+		async def _send_metrics_selection(sample_time_end_ms: int) -> None:
+			measure_types = [
+				SensingDataUpload_pb2.MeasurementTypeMsg(measure_type=Common_pb2.ENVIROMENTAL_TEMPERATURE_CURRENT),
+				SensingDataUpload_pb2.MeasurementTypeMsg(measure_type=Common_pb2.ENVIROMENTAL_HUMIDITY_CURRENT),
+				SensingDataUpload_pb2.MeasurementTypeMsg(measure_type=Common_pb2.VOLTAGE_CURRENT),
+			]
+			msg = SensingDataUpload_pb2.DataSelectionDisseminate(
+				header=_mk_header(),
+				appVer=1,
+				product=Common_pb2.UNKNOWN_PRODUCT,
+				measure_type=measure_types,
+				sample_time_start=0,
+				sample_time_end=sample_time_end_ms,
+			)
+			await _write_app_message(DeviceAppBulletSensor_pb2.AppMessage(appVer=1, data_selection=msg))
+
+		async def _send_vibration_selection(sample_time_end_ms: int) -> None:
+			msg = SensingDataUpload_pb2.DataSelectionDisseminate(
+				header=_mk_header(),
+				appVer=1,
+				product=Common_pb2.UNKNOWN_PRODUCT,
+				measure_type=[SensingDataUpload_pb2.MeasurementTypeMsg(measure_type=Common_pb2.VIBRATION_ACC_WAVE)],
+				sample_time_start=0,
+				sample_time_end=sample_time_end_ms,
+			)
+			await _write_app_message(DeviceAppBulletSensor_pb2.AppMessage(appVer=1, data_selection=msg))
+
+		async def _send_close_session() -> None:
+			msg = ConfigurationAndCommand_pb2.CommandDisseminate(
+				header=_mk_header(),
+				appVer=1,
+				command_pair=ConfigurationAndCommand_pb2.CommandPair(command=Common_pb2.CLOSE_SESSION),
+			)
+			await _write_app_message(DeviceAppBulletSensor_pb2.AppMessage(appVer=1, command_dissem=msg))
+
+		async def _recv_app(timeout_s: float):
+			payload = await _wait_next_rx(timeout_s)
+			msg = _safe_parse_app(payload)
+			msg_type = msg.WhichOneof("_messages") or "(none)"
+			return payload, msg, msg_type
+
+		try:
+			await client.connect()
+			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"waiting_connection": "done", "connected": "done"}}))
+			if mtu and hasattr(client, "request_mtu"):
+				try:
+					await client.request_mtu(mtu)
+				except Exception:
+					pass
+			await client.start_notify(self.uart_tx_uuid, _on_notify)
+
+			# optional pre-steps required by sensor for many commands
+			if action in ("version", "config_hash", "metrics", "waveform", "close_session"):
+				await _send_config_time()
+				await asyncio.sleep(0.1)
+
+			if action == "connect_test":
+				self.ui_queue.put(("tile_update", tile_id, {"status": "Connected (test OK)"}))
+
+			elif action == "discover_gatt":
+				try:
+					services = client.services
+					if services is None:
+						services = await client.get_services()
+				except Exception:
+					services = await client.get_services()
+				gatt_lines = []
+				for svc in services:
+					gatt_lines.append(f"[SERVICE] {svc.uuid} ({getattr(svc, 'description', '')})")
+					for ch in getattr(svc, "characteristics", []):
+						props = ",".join(getattr(ch, "properties", []) or [])
+						gatt_lines.append(f"  [CHAR] {ch.uuid} props=[{props}]")
+				self.ui_queue.put(("tile_update", tile_id, {
+					"status": "GATT discovered",
+					"rx_text": "\n".join(gatt_lines) if gatt_lines else "(no services)",
+				}))
+
+			elif action == "notify_test":
+				self.ui_queue.put(("tile_update", tile_id, {"status": "Notify active for 2s (test)"}))
+				try:
+					payload = await _wait_next_rx(2.0)
+					rx_type = self._pb_message_type(payload)
+					self.ui_queue.put(("tile_update", tile_id, {
+						"status": f"Notify RX {rx_type}",
+						"rx_text": f"TYPE: {rx_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
+					}))
+				except asyncio.TimeoutError:
+					self.ui_queue.put(("tile_update", tile_id, {"status": "Notify test timeout (no unsolicited RX)"}))
+
+			elif action == "sync_time":
+
+				self.ui_queue.put(("tile_update", tile_id, {"status": "Time sync sent", "checklist": {"general_info_exchange": "done"}}))
+
+			elif action == "version":
+				await _send_version_retrieve()
+				payload, _msg, msg_type = await _recv_app(rx_timeout)
+				self.ui_queue.put(("tile_update", tile_id, {
+					"status": f"RX {msg_type}",
+					"checklist": {"general_info_exchange": "done"},
+					"rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
+				}))
+
+			elif action == "config_hash":
+				await _send_version_retrieve()
+				_, _, _ = await _recv_app(rx_timeout)  # consume version
+				await asyncio.sleep(0.1)
+				await _send_config_hash_retrieve()
+				payload, _msg, msg_type = await _recv_app(rx_timeout)
+				self.ui_queue.put(("tile_update", tile_id, {
+					"status": f"RX {msg_type}",
+					"checklist": {"general_info_exchange": "done"},
+					"rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
+				}))
+
+			elif action == "metrics":
+				await _send_version_retrieve()
+				_, _, _ = await _recv_app(rx_timeout)
+				await asyncio.sleep(0.1)
+				await _send_config_hash_retrieve()
+				_, _, _ = await _recv_app(rx_timeout)
+				await asyncio.sleep(0.1)
+				await _send_metrics_selection(int(time.time() * 1000))
+				payload, msg, msg_type = await _recv_app(rx_timeout)
+				status = f"RX {msg_type}"
+				if msg_type == "data_upload":
+					try:
+						status += f" ({len(list(msg.data_upload.data_pair))} metrics)"
+					except Exception:
+						pass
+				self.ui_queue.put(("tile_update", tile_id, {
+					"status": status,
+					"checklist": {"general_info_exchange": "done", "data_collection": "done"},
+					"rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
+				}))
+
+			elif action == "waveform":
+				await _send_version_retrieve()
+				_, _, _ = await _recv_app(rx_timeout)
+				await asyncio.sleep(0.1)
+				await _send_config_hash_retrieve()
+				_, _, _ = await _recv_app(rx_timeout)
+				await asyncio.sleep(0.1)
+				await _send_vibration_selection(int(time.time() * 1000))
+				received = 0
+				expected = None
+				last_payload = b""
+				last_type = "(none)"
+				while True:
+					payload, msg, msg_type = await _recv_app(rx_timeout)
+					last_payload, last_type = payload, msg_type
+					if msg_type != "data_upload":
+						break
+					received += 1
+					if expected is None:
+						try:
+							expected = int(msg.data_upload.header.total_block)
+						except Exception:
+							expected = None
+						if expected is not None and expected <= 0:
+							expected = None
+					self.ui_queue.put(("tile_update", tile_id, {
+						"status": f"Waveform blocks {received}/{expected or '?'}",
+						"checklist": {"general_info_exchange": "done", "data_collection": "in_progress"},
+						"rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
+					}))
+					if expected is not None and received >= expected:
+						break
+				self.ui_queue.put(("tile_update", tile_id, {
+					"status": f"Waveform done ({received}/{expected or '?'}) last={last_type}",
+					"checklist": {"general_info_exchange": "done", "data_collection": "done"},
+					"rx_text": f"TYPE: {last_type}\nHEX: {self._hex_short(last_payload)}\n\n" + self._format_rx_payload(last_payload) if last_payload else "RX: —",
+				}))
+
+			elif action == "close_session":
+				await _send_close_session()
+				self.ui_queue.put(("tile_update", tile_id, {"status": "Close session sent", "checklist": {"close_session": "done"}}))
+
+			else:
+				raise ValueError(f"Unknown action: {action}")
+
+			try:
+				await client.stop_notify(self.uart_tx_uuid)
+			except Exception:
+				pass
+
+		except Exception as exc:
+			self.ui_queue.put(("tile_update", tile_id, {"status": f"Error: {type(exc).__name__}: {exc}"}))
+		finally:
+			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"disconnect": "in_progress"}}))
+			if client.is_connected:
+				try:
+					await client.disconnect()
+				except Exception:
+					pass
+			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"disconnect": "done"}}))
+			self.ui_queue.put(("tile_update", tile_id, {"status": "Disconnected"}))
+			self.ui_queue.put(("cycle_done", tile_id))
 
 	async def _run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float) -> None:
 		address_prefix = address_prefix.upper()
@@ -190,6 +510,99 @@ class BleCycleWorker:
 			msg.ParseFromString(payload)
 			return msg
 
+		def _mk_header() -> Froto_pb2.FrotoHeader:
+			return Froto_pb2.FrotoHeader(
+				version=1,
+				is_up=False,
+				message_seq_no=_alloc_seq(),
+				time_to_live=3,
+				primitive_type=Froto_pb2.SIMPLE_DISSEMINATE,
+				message_type=Froto_pb2.NORMAL_MESSAGE,
+				total_block=1,
+			)
+
+		async def _send_config_time() -> None:
+			current_time_ms = int(time.time() * 1000)
+			config_pair = ConfigurationAndCommand_pb2.ConfigPair(
+				specific_config_item=Common_pb2.CURRENT_TIME,
+				time_config_content=ConfigurationAndCommand_pb2.TimeArray(
+					time=[ConfigurationAndCommand_pb2.TimeArrayElement(time=current_time_ms)]
+				),
+			)
+			config_dissem = ConfigurationAndCommand_pb2.ConfigDisseminate(
+				header=_mk_header(),
+				appVer=1,
+				product=Common_pb2.UNKNOWN_PRODUCT,
+				config_pair=[config_pair],
+			)
+			app_message = DeviceAppBulletSensor_pb2.AppMessage(appVer=1, config_dissem=config_dissem)
+			await _write_app_message(app_message)
+
+		async def _send_version_retrieve() -> None:
+			msg = FirmwareUpdateOverTheAir_pb2.VersionRetrieve(
+				header=_mk_header(),
+				appVer=1,
+				payload=FirmwareUpdateOverTheAir_pb2.CURRENT_VERSION,
+			)
+			app_message = DeviceAppBulletSensor_pb2.AppMessage(appVer=1, version_retrieve=msg)
+			await _write_app_message(app_message)
+
+		async def _send_config_hash_retrieve() -> None:
+			msg = ConfigurationAndCommand_pb2.ConfigRetrieve(
+				header=_mk_header(),
+				appVer=1,
+				payload=ConfigurationAndCommand_pb2.CURRENT_CONFIG_HASH,
+			)
+			app_message = DeviceAppBulletSensor_pb2.AppMessage(appVer=1, config_retrieve=msg)
+			await _write_app_message(app_message)
+
+		def _default_metric_measure_types():
+			return [
+				SensingDataUpload_pb2.MeasurementTypeMsg(measure_type=Common_pb2.ENVIROMENTAL_TEMPERATURE_CURRENT),
+				SensingDataUpload_pb2.MeasurementTypeMsg(measure_type=Common_pb2.ENVIROMENTAL_HUMIDITY_CURRENT),
+				SensingDataUpload_pb2.MeasurementTypeMsg(measure_type=Common_pb2.VOLTAGE_CURRENT),
+			]
+
+		async def _send_metrics_selection(sample_time_end_ms: int) -> None:
+			data_selection = SensingDataUpload_pb2.DataSelectionDisseminate(
+				header=_mk_header(),
+				appVer=1,
+				product=Common_pb2.UNKNOWN_PRODUCT,
+				measure_type=_default_metric_measure_types(),
+				sample_time_start=0,
+				sample_time_end=sample_time_end_ms,
+			)
+			app_message = DeviceAppBulletSensor_pb2.AppMessage(appVer=1, data_selection=data_selection)
+			await _write_app_message(app_message)
+
+		async def _send_vibration_selection(sample_time_end_ms: int) -> None:
+			vibration_types = [SensingDataUpload_pb2.MeasurementTypeMsg(measure_type=Common_pb2.VIBRATION_ACC_WAVE)]
+			data_selection = SensingDataUpload_pb2.DataSelectionDisseminate(
+				header=_mk_header(),
+				appVer=1,
+				product=Common_pb2.UNKNOWN_PRODUCT,
+				measure_type=vibration_types,
+				sample_time_start=0,
+				sample_time_end=sample_time_end_ms,
+			)
+			app_message = DeviceAppBulletSensor_pb2.AppMessage(appVer=1, data_selection=data_selection)
+			await _write_app_message(app_message)
+
+		async def _send_close_session() -> None:
+			command_dissem = ConfigurationAndCommand_pb2.CommandDisseminate(
+				header=_mk_header(),
+				appVer=1,
+				command_pair=ConfigurationAndCommand_pb2.CommandPair(command=Common_pb2.CLOSE_SESSION),
+			)
+			app_message = DeviceAppBulletSensor_pb2.AppMessage(appVer=1, command_dissem=command_dissem)
+			await _write_app_message(app_message)
+
+		async def _recv_app(timeout_s: float):
+			payload = await _wait_next_rx(timeout_s)
+			msg = _safe_parse_app(payload)
+			msg_type = msg.WhichOneof("_messages") or "(none)"
+			return payload, msg, msg_type
+
 		try:
 			await client.connect()
 			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"waiting_connection": "done", "connected": "done"}}))
@@ -203,95 +616,31 @@ class BleCycleWorker:
 			await client.start_notify(self.uart_tx_uuid, _on_notify)
 			self.ui_queue.put(("tile_update", tile_id, {"status": "Sending config_dissem...", "checklist": {"general_info_exchange": "in_progress"}}))
 
-			current_time_ms = int(time.time() * 1000)
-			config_pair = ConfigurationAndCommand_pb2.ConfigPair(
-				specific_config_item=Common_pb2.CURRENT_TIME,
-				time_config_content=ConfigurationAndCommand_pb2.TimeArray(
-					time=[ConfigurationAndCommand_pb2.TimeArrayElement(time=current_time_ms)]
-				),
-			)
-			config_dissem = ConfigurationAndCommand_pb2.ConfigDisseminate(
-				header=Froto_pb2.FrotoHeader(
-					version=1,
-					is_up=False,
-					message_seq_no=_alloc_seq(),
-					time_to_live=3,
-					primitive_type=Froto_pb2.SIMPLE_DISSEMINATE,
-					message_type=Froto_pb2.NORMAL_MESSAGE,
-					total_block=1,
-				),
-				appVer=1,
-				product=Common_pb2.UNKNOWN_PRODUCT,
-				config_pair=[config_pair],
-			)
-			app_message = DeviceAppBulletSensor_pb2.AppMessage(
-				appVer=1,
-				config_dissem=config_dissem,
-			)
-			payload = await _write_app_message(app_message)
+			await _send_config_time()
 
 			await asyncio.sleep(0.1)
 			self.ui_queue.put(("tile_update", tile_id, {"status": "Sending version_retrieve..."}))
-			version_retrieve = FirmwareUpdateOverTheAir_pb2.VersionRetrieve(
-				header=Froto_pb2.FrotoHeader(
-					version=1,
-					is_up=False,
-					message_seq_no=_alloc_seq(),
-					time_to_live=3,
-					primitive_type=Froto_pb2.SIMPLE_DISSEMINATE,
-					message_type=Froto_pb2.NORMAL_MESSAGE,
-					total_block=1,
-				),
-				appVer=1,
-				payload=FirmwareUpdateOverTheAir_pb2.CURRENT_VERSION,
-			)
-			app_message = DeviceAppBulletSensor_pb2.AppMessage(
-				appVer=1,
-				version_retrieve=version_retrieve,
-			)
-			await _write_app_message(app_message)
+			await _send_version_retrieve()
 
 			try:
-				payload = await _wait_next_rx(rx_timeout)
+				payload, app_message, message_type = await _recv_app(rx_timeout)
 			except asyncio.TimeoutError:
 				self.ui_queue.put(("tile_update", tile_id, {"status": "RX timeout"}))
 			else:
 				latest_status = "Received"
-				latest_rx_text = f"TYPE: {self._pb_message_type(payload)}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload)
+				latest_rx_text = f"TYPE: {message_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload)
 				try:
-					app_message = _safe_parse_app(payload)
-					message_type = app_message.WhichOneof("_messages")
 					if message_type == "current_version_upload":
 						await asyncio.sleep(0.1)
 						self.ui_queue.put(("tile_update", tile_id, {"status": "Sending config_retrieve..."}))
-						config_retrieve = ConfigurationAndCommand_pb2.ConfigRetrieve(
-							header=Froto_pb2.FrotoHeader(
-								version=1,
-								is_up=False,
-								message_seq_no=_alloc_seq(),
-								time_to_live=3,
-								primitive_type=Froto_pb2.SIMPLE_DISSEMINATE,
-								message_type=Froto_pb2.NORMAL_MESSAGE,
-								total_block=1,
-							),
-							appVer=1,
-							payload=ConfigurationAndCommand_pb2.CURRENT_CONFIG_HASH,
-						)
-						app_message = DeviceAppBulletSensor_pb2.AppMessage(
-							appVer=1,
-							config_retrieve=config_retrieve,
-						)
-						await _write_app_message(app_message)
+						await _send_config_hash_retrieve()
 
 						try:
-							hash_payload = await _wait_next_rx(rx_timeout)
+							hash_payload, hash_message, hash_type = await _recv_app(rx_timeout)
 						except asyncio.TimeoutError:
 							latest_status = "Config hash timeout"
 						else:
 							try:
-								# print("Parsing config hash upload...")
-								hash_message = _safe_parse_app(hash_payload)
-								hash_type = hash_message.WhichOneof("_messages")
 								# print(f"Config hash upload type: {hash_type}")
 								if hash_type == "config_hash_upload":
 									data_collection_complete = True
@@ -304,48 +653,12 @@ class BleCycleWorker:
 										latest_rx_text = f"TYPE: {self._pb_message_type(hash_payload)}\nHEX: {self._hex_short(hash_payload)}\n\n" + self._format_rx_payload(hash_payload)
 
 										current_time_ms = int(time.time() * 1000)
-										try:
-											measure_types = [
-												SensingDataUpload_pb2.MeasurementTypeMsg(
-													measure_type=Common_pb2.ENVIROMENTAL_TEMPERATURE_CURRENT
-												),
-												SensingDataUpload_pb2.MeasurementTypeMsg(
-													measure_type=Common_pb2.ENVIROMENTAL_HUMIDITY_CURRENT
-												),
-												SensingDataUpload_pb2.MeasurementTypeMsg(
-													measure_type=Common_pb2.VOLTAGE_CURRENT
-												),
-											]
-										except Exception:
-											print("Error creating measure types, using empty list")
-											measure_types = []
-
-										data_selection = SensingDataUpload_pb2.DataSelectionDisseminate(
-											header=Froto_pb2.FrotoHeader(
-												version=1,
-												is_up=False,
-												message_seq_no=_alloc_seq() + loop_index,
-												time_to_live=3,
-												primitive_type=Froto_pb2.SIMPLE_DISSEMINATE,
-												message_type=Froto_pb2.NORMAL_MESSAGE,
-												total_block=1,
-											),
-											appVer=1,
-											product=Common_pb2.UNKNOWN_PRODUCT,
-											measure_type=measure_types,
-											sample_time_start=0,
-											sample_time_end=current_time_ms,
-										)
-										app_message = DeviceAppBulletSensor_pb2.AppMessage(
-											appVer=1,
-											data_selection=data_selection,
-										)
-
+										
 										self.ui_queue.put(("tile_update", tile_id, {"status": f"Sending data_selection ({loop_index + 1}/6)..."}))
-										await _write_app_message(app_message)
+										await _send_metrics_selection(current_time_ms)
 
 										try:
-											data_payload = await _wait_next_rx(rx_timeout)
+											data_payload, data_message, data_type = await _recv_app(rx_timeout)
 										except asyncio.TimeoutError:
 											latest_status = "Data upload timeout"
 											data_collection_complete = False
@@ -353,8 +666,6 @@ class BleCycleWorker:
 											break
 										else:
 											try:
-												data_message = _safe_parse_app(data_payload)
-												data_type = data_message.WhichOneof("_messages")
 												if data_type == "data_upload":
 													data_pairs = list(data_message.data_upload.data_pair)
 													if len(data_pairs) >= 3:
@@ -381,39 +692,15 @@ class BleCycleWorker:
 
 									if data_collection_complete:
 										current_time_ms = int(time.time() * 1000)
-										vibration_types = [
-											SensingDataUpload_pb2.MeasurementTypeMsg(
-												measure_type=Common_pb2.VIBRATION_ACC_WAVE
-											),
-										]
-										vibration_selection = SensingDataUpload_pb2.DataSelectionDisseminate(
-											header=Froto_pb2.FrotoHeader(
-												version=1,
-												is_up=False,
-												message_seq_no=_alloc_seq(),
-												time_to_live=3,
-												primitive_type=Froto_pb2.SIMPLE_DISSEMINATE,
-												message_type=Froto_pb2.NORMAL_MESSAGE,
-												total_block=1,
-											),
-											appVer=1,
-											product=Common_pb2.UNKNOWN_PRODUCT,
-											measure_type=vibration_types,
-											sample_time_start=0,
-											sample_time_end=current_time_ms,
-										)
-										app_message = DeviceAppBulletSensor_pb2.AppMessage(
-											appVer=1,
-											data_selection=vibration_selection,
-										)
 										self.ui_queue.put(("tile_update", tile_id, {"status": "Sending vibration data_selection...", "checklist": {"data_collection": "in_progress"}}))
-										await _write_app_message(app_message)
+										await _send_vibration_selection(current_time_ms)
 
 										received_messages = 0
+										expected_wave_blocks = None
 										for message_index in range(64):
-											print(f"Waiting for vibration data upload {message_index + 1}/64...")
+											print(f"Waiting for vibration data upload {message_index + 1}/{expected_wave_blocks or 64}...")
 											try:
-												data_payload = await _wait_next_rx(rx_timeout)
+												data_payload, data_message, data_type = await _recv_app(rx_timeout)
 											except asyncio.TimeoutError:
 												latest_status = "Data upload timeout"
 												data_collection_complete = False
@@ -421,16 +708,21 @@ class BleCycleWorker:
 												break
 											else:
 												try:
-													print(f"1Waiting for vibration data upload {message_index + 1}/64...")
-													data_message = _safe_parse_app(data_payload)
-													data_type = data_message.WhichOneof("_messages")
+													print(f"1Waiting for vibration data upload {message_index + 1}/{expected_wave_blocks or 64}...")
 													if data_type == "data_upload":
-														print(f"2Waiting for vibration data upload {message_index + 1}/64...")
+														print(f"2Waiting for vibration data upload {message_index + 1}/{expected_wave_blocks or 64}...")
+														if expected_wave_blocks is None:
+															try:
+																expected_wave_blocks = int(data_message.data_upload.header.total_block)
+																if expected_wave_blocks <= 0:
+																	expected_wave_blocks = 64
+															except Exception:
+																expected_wave_blocks = 64
 														received_messages += 1
-														latest_status = f"Data upload received ({received_messages}/64)"
+														latest_status = f"Data upload received ({received_messages}/{expected_wave_blocks or 64})"
 														latest_rx_text = f"TYPE: {self._pb_message_type(data_payload)}\nHEX: {self._hex_short(data_payload)}\n\n" + self._format_rx_payload(data_payload)
 													else:
-														print(f"3Waiting for vibration data upload {message_index + 1}/64...")
+														print(f"3Waiting for vibration data upload {message_index + 1}/{expected_wave_blocks or 64}...")
 														latest_status = f"Unexpected reply: {data_type}"
 														data_collection_complete = False
 														break
@@ -440,31 +732,11 @@ class BleCycleWorker:
 													self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "pending"}}))
 													break
 
-										if received_messages == 64:
+										if received_messages == (expected_wave_blocks or 64):
 											self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "done"}}))
 											self.ui_queue.put(("tile_update", tile_id, {"checklist": {"close_session": "in_progress"}}))
 											await asyncio.sleep(0.1)
-											command_dissem = ConfigurationAndCommand_pb2.CommandDisseminate(
-												header=Froto_pb2.FrotoHeader(
-													version=1,
-													is_up=False,
-													message_seq_no=_alloc_seq(),
-													time_to_live=3,
-													primitive_type=Froto_pb2.SIMPLE_DISSEMINATE,
-													message_type=Froto_pb2.NORMAL_MESSAGE,
-													total_block=1,
-												),
-												appVer=1,
-												command_pair=ConfigurationAndCommand_pb2.CommandPair(
-													command=Common_pb2.CLOSE_SESSION,
-												),
-											)
-											app_message = DeviceAppBulletSensor_pb2.AppMessage(
-												appVer=1,
-												command_dissem=command_dissem,
-											)
-											self.ui_queue.put(("tile_update", tile_id, {"status": "Sending CLOSE_SESSION..."}))
-											await _write_app_message(app_message)
+											await _send_close_session()
 											self.ui_queue.put(("tile_update", tile_id, {"checklist": {"close_session": "done"}}))
 								else:
 									latest_status = f"Unexpected reply: {hash_type}"
@@ -508,7 +780,7 @@ class SimGwV2App:
 		self.tiles: Dict[int, Dict[str, tk.Label]] = {}
 		self.auto_run = False
 
-		self.address_prefix_var = tk.StringVar(value="C4:BD:6A:01:02:03")
+		self.address_prefix_var = tk.StringVar(value="C4:BD:6A")
 		self.scan_timeout_var = tk.StringVar(value="60")
 		self.rx_timeout_var = tk.StringVar(value="5")
 		self.mtu_var = tk.StringVar(value="247")
@@ -555,6 +827,8 @@ class SimGwV2App:
 
 		self.start_button = ttk.Button(controls, text="Start", style="Accent.TButton", command=self._on_start)
 		self.start_button.pack(side=tk.TOP, pady=(0, 6))
+		self.stop_auto_button = ttk.Button(controls, text="Stop Auto", command=lambda: setattr(self, "auto_run", False))
+		self.stop_auto_button.pack(side=tk.TOP)
 
 		form = tk.Frame(self.root, bg=self.colors["bg"])
 		form.pack(fill=tk.X, padx=16)
@@ -563,6 +837,22 @@ class SimGwV2App:
 		self._build_field(form, "MTU", self.mtu_var, width=8)
 		self._build_field(form, "Scan timeout (s)", self.scan_timeout_var, width=8)
 		self._build_field(form, "RX timeout (s)", self.rx_timeout_var, width=8)
+
+		manual = tk.Frame(self.root, bg=self.colors["bg"])
+		manual.pack(fill=tk.X, padx=16, pady=(8, 0))
+		tk.Label(manual, text="Manual commands:", bg=self.colors["bg"], fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 8))
+		for text_, action_ in [
+			("Sync Time", "sync_time"),
+			("Version", "version"),
+			("Config Hash", "config_hash"),
+			("Metrics", "metrics"),
+			("Waveform", "waveform"),
+			("Close", "close_session"),
+			("Connect Test", "connect_test"),
+			("Discover GATT", "discover_gatt"),
+			("Notify Test", "notify_test"),
+		]:
+			ttk.Button(manual, text=text_, command=lambda a=action_: self._start_manual_action(a)).pack(side=tk.LEFT, padx=(0, 6))
 
 		tiles_frame = tk.Frame(self.root, bg=self.colors["bg"])
 		tiles_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(12, 16))
@@ -623,6 +913,26 @@ class SimGwV2App:
 			rx_timeout = 5.0
 
 		self.worker.run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout)
+
+	def _start_manual_action(self, action: str) -> None:
+		self.auto_run = False
+		self.tile_counter += 1
+		tile_id = self.tile_counter
+		self._create_tile(tile_id)
+		address_prefix = self.address_prefix_var.get().strip() or "C4:BD:6A"
+		try:
+			mtu = int(self.mtu_var.get())
+		except ValueError:
+			mtu = 247
+		try:
+			scan_timeout = float(self.scan_timeout_var.get())
+		except ValueError:
+			scan_timeout = 6.0
+		try:
+			rx_timeout = float(self.rx_timeout_var.get())
+		except ValueError:
+			rx_timeout = 5.0
+		self.worker.run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action)
 
 	def _create_tile(self, tile_id: int) -> None:
 		card = tk.Frame(
