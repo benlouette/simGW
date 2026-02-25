@@ -780,60 +780,76 @@ class BleCycleWorker:
 										self.ui_queue.put(("tile_update", tile_id, {"status": "Sending vibration data_selection...", "checklist": {"data_collection": "in_progress"}}))
 										await _send_vibration_selection(current_time_ms)
 
-										received_messages = 0
-										expected_wave_blocks = None
-										for message_index in range(64):
-											print(f"Waiting for vibration data upload {message_index + 1}/{expected_wave_blocks or 64}...")
+										received = 0
+										expected = None
+										last_payload = b""
+										last_type = "(none)"
+										wave_payloads = []
+										wave_msgs = []
+										wave_rx_timeout = max(float(rx_timeout), 10.0)
+
+										while True:
 											try:
-												data_payload, data_message, data_type = await _recv_app(rx_timeout)
+												data_payload, data_message, data_type = await _recv_app(wave_rx_timeout)
 											except asyncio.TimeoutError:
-												latest_status = "Data upload timeout"
+												latest_status = f"Waveform timeout ({received}/{expected or '?'})"
 												data_collection_complete = False
 												self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "pending"}}))
 												break
-											else:
-												try:
-													print(f"1Waiting for vibration data upload {message_index + 1}/{expected_wave_blocks or 64}...")
-													if data_type == "data_upload":
-														wave_payloads.append(data_payload)
-														wave_msgs.append(data_message)
-														print(f"2Waiting for vibration data upload {message_index + 1}/{expected_wave_blocks or 64}...")
-														if expected_wave_blocks is None:
-															try:
-																expected_wave_blocks = int(data_message.data_upload.header.total_block)
-																if expected_wave_blocks <= 0:
-																	expected_wave_blocks = 64
-															except Exception:
-																expected_wave_blocks = 64
-														received_messages += 1
-														latest_status = f"Data upload received ({received_messages}/{expected_wave_blocks or 64})"
-														latest_rx_text = f"TYPE: {self._pb_message_type(data_payload)}\nHEX: {self._hex_short(data_payload)}\n\n" + self._format_rx_payload(data_payload)
-													else:
-														print(f"3Waiting for vibration data upload {message_index + 1}/{expected_wave_blocks or 64}...")
-														latest_status = f"Unexpected reply: {data_type}"
-														data_collection_complete = False
-														break
-												except Exception:
-													latest_status = "Data upload parse error"
-													data_collection_complete = False
-													self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "pending"}}))
-													break
 
-										if received_messages == (expected_wave_blocks or 64):
+											last_payload, last_type = data_payload, data_type
+
+											if data_type != "data_upload":
+												latest_status = f"Unexpected reply during waveform: {data_type}"
+												data_collection_complete = False
+												self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "pending"}}))
+												break
+
+											wave_payloads.append(data_payload)
+											wave_msgs.append(data_message)
+											received += 1
+
+											if expected is None:
+												try:
+													expected = int(data_message.data_upload.header.total_block)
+													if expected <= 0:
+														expected = None
+												except Exception:
+													expected = None
+
+											latest_status = f"Waveform blocks {received}/{expected or '?'}"
+											latest_rx_text = (
+												f"TYPE: {self._pb_message_type(data_payload)}\n"
+												f"HEX: {self._hex_short(data_payload)}\n\n"
+												+ self._format_rx_payload(data_payload)
+											)
+
+											self.ui_queue.put(("tile_update", tile_id, {
+												"status": latest_status,
+												"checklist": {"data_collection": "in_progress"},
+												"rx_text": latest_rx_text,
+											}))
+
+											if expected is not None and received >= expected:
+												break
+
+										if wave_payloads and (expected is None or received >= expected):
 											try:
 												export_info = self._export_waveform_capture(tile_id, wave_payloads, wave_msgs)
-												latest_status = f"{latest_status} / exported {export_info['count']} blocks"
+												latest_status = f"Waveform done ({received}/{expected or '?'}) / exported {export_info['count']} blocks"
 												latest_rx_text = latest_rx_text + f"\n\nEXPORT:\n- raw: {export_info['raw']}\n- index: {export_info['index']}"
 												if export_info.get("samples"):
 													latest_rx_text = latest_rx_text + f"\n- samples: {export_info['samples']}"
 											except Exception as export_exc:
-												latest_status = f"{latest_status} / export failed"
+												latest_status = f"Waveform done ({received}/{expected or '?'}) / export failed"
 												latest_rx_text = latest_rx_text + f"\n\nEXPORT ERROR: {export_exc}"
 											self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "done"}}))
 											self.ui_queue.put(("tile_update", tile_id, {"checklist": {"close_session": "in_progress"}}))
 											await asyncio.sleep(0.1)
 											await _send_close_session()
 											self.ui_queue.put(("tile_update", tile_id, {"checklist": {"close_session": "done"}}))
+										else:
+											data_collection_complete = False
 								else:
 									latest_status = f"Unexpected reply: {hash_type}"
 									print(f"--> Config hash upload type: {hash_type}")
