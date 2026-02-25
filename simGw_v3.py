@@ -1,19 +1,27 @@
 import asyncio
+import csv
 import os
 import sys
+import struct
 import threading
 import time
 import tkinter as tk
 from dataclasses import dataclass
 from queue import Queue, Empty
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from typing import Dict, Optional
 
 from google.protobuf import text_format
 from bleak import BleakClient, BleakScanner
 
+try:
+	import matplotlib.pyplot as plt
+except Exception:
+	plt = None
+
 BASE_DIR = os.path.dirname(__file__)
 FROTO_DIR = os.path.join(BASE_DIR, "froto")
+CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
 if FROTO_DIR not in sys.path:
 	sys.path.insert(0, FROTO_DIR)
 
@@ -116,6 +124,61 @@ class BleCycleWorker:
 			return payload.hex(" ")
 		return payload[:max_len].hex(" ") + f" ... ({len(payload)} bytes)"
 
+
+	def _extract_waveform_sample_rows(self, app_msg) -> list:
+		rows = []
+		try:
+			for pair_idx, pair in enumerate(getattr(app_msg.data_upload, "data_pair", [])):
+				for field_desc, value in pair.ListFields():
+					if field_desc.label != field_desc.LABEL_REPEATED:
+						continue
+					if field_desc.cpp_type not in (
+						field_desc.CPPTYPE_INT32, field_desc.CPPTYPE_INT64,
+						field_desc.CPPTYPE_UINT32, field_desc.CPPTYPE_UINT64,
+						field_desc.CPPTYPE_FLOAT, field_desc.CPPTYPE_DOUBLE,
+					):
+						continue
+					for sample_idx, sample in enumerate(value):
+						rows.append((pair_idx, field_desc.name, sample_idx, sample))
+		except Exception:
+			return []
+		return rows
+
+	def _export_waveform_capture(self, tile_id: int, payloads: list, parsed_msgs: list) -> dict:
+		os.makedirs(CAPTURE_DIR, exist_ok=True)
+		ts = time.strftime("%Y%m%d_%H%M%S")
+		base = os.path.join(CAPTURE_DIR, f"waveform_tile{tile_id}_{ts}")
+		raw_path = base + ".bin"
+		idx_path = base + "_index.csv"
+		samples_path = base + "_samples.csv"
+		with open(raw_path, "wb") as f:
+			for payload in payloads:
+				f.write(len(payload).to_bytes(4, "little"))
+				f.write(payload)
+		sample_rows = []
+		with open(idx_path, "w", newline="", encoding="utf-8") as f:
+			w = csv.writer(f)
+			w.writerow(["block_index", "payload_len", "msg_type", "total_block", "msg_seq_no", "hex_preview"])
+			for i, (payload, msg) in enumerate(zip(payloads, parsed_msgs), start=1):
+				msg_type = msg.WhichOneof("_messages") or "(none)"
+				total_block = ""
+				msg_seq_no = ""
+				try:
+					total_block = getattr(msg.data_upload.header, "total_block", "")
+					msg_seq_no = getattr(msg.data_upload.header, "message_seq_no", "")
+				except Exception:
+					pass
+				w.writerow([i, len(payload), msg_type, total_block, msg_seq_no, self._hex_short(payload, 32)])
+				if msg_type == "data_upload":
+					sample_rows.extend((i,) + r for r in self._extract_waveform_sample_rows(msg))
+		if sample_rows:
+			with open(samples_path, "w", newline="", encoding="utf-8") as f:
+				w = csv.writer(f)
+				w.writerow(["block_index", "pair_index", "field_name", "sample_index", "value"])
+				w.writerows(sample_rows)
+		else:
+			samples_path = ""
+		return {"raw": raw_path, "index": idx_path, "samples": samples_path, "count": len(payloads)}
 
 	async def _run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str) -> None:
 		address_prefix = address_prefix.upper()
@@ -382,11 +445,15 @@ class BleCycleWorker:
 				expected = None
 				last_payload = b""
 				last_type = "(none)"
+				wave_payloads = []
+				wave_msgs = []
 				while True:
 					payload, msg, msg_type = await _recv_app(rx_timeout)
 					last_payload, last_type = payload, msg_type
 					if msg_type != "data_upload":
 						break
+					wave_payloads.append(payload)
+					wave_msgs.append(msg)
 					received += 1
 					if expected is None:
 						try:
@@ -402,10 +469,28 @@ class BleCycleWorker:
 					}))
 					if expected is not None and received >= expected:
 						break
+				export_info = None
+				if wave_payloads:
+					try:
+						export_info = self._export_waveform_capture(tile_id, wave_payloads, wave_msgs)
+					except Exception as export_exc:
+						export_info = {"error": str(export_exc)}
+				status_text = f"Waveform done ({received}/{expected or '?'}) last={last_type}"
+				rx_text = f"TYPE: {last_type}\nHEX: {self._hex_short(last_payload)}\n\n" + self._format_rx_payload(last_payload) if last_payload else "RX: —"
+				if export_info is not None:
+					if "error" in export_info:
+						status_text += " / export failed"
+						rx_text += f"\n\nEXPORT ERROR: {export_info['error']}"
+					else:
+						status_text += f" / exported {export_info['count']} blocks"
+						rx_text += f"\n\nEXPORT:\n- raw: {export_info['raw']}\n- index: {export_info['index']}"
+						if export_info.get("samples"):
+							rx_text += f"\n- samples: {export_info['samples']}"
 				self.ui_queue.put(("tile_update", tile_id, {
-					"status": f"Waveform done ({received}/{expected or '?'}) last={last_type}",
+					"status": status_text,
 					"checklist": {"general_info_exchange": "done", "data_collection": "done"},
-					"rx_text": f"TYPE: {last_type}\nHEX: {self._hex_short(last_payload)}\n\n" + self._format_rx_payload(last_payload) if last_payload else "RX: —",
+					"rx_text": rx_text,
+					"export_info": export_info,
 				}))
 
 			elif action == "close_session":
@@ -710,6 +795,8 @@ class BleCycleWorker:
 												try:
 													print(f"1Waiting for vibration data upload {message_index + 1}/{expected_wave_blocks or 64}...")
 													if data_type == "data_upload":
+														wave_payloads.append(data_payload)
+														wave_msgs.append(data_message)
 														print(f"2Waiting for vibration data upload {message_index + 1}/{expected_wave_blocks or 64}...")
 														if expected_wave_blocks is None:
 															try:
@@ -733,6 +820,15 @@ class BleCycleWorker:
 													break
 
 										if received_messages == (expected_wave_blocks or 64):
+											try:
+												export_info = self._export_waveform_capture(tile_id, wave_payloads, wave_msgs)
+												latest_status = f"{latest_status} / exported {export_info['count']} blocks"
+												latest_rx_text = latest_rx_text + f"\n\nEXPORT:\n- raw: {export_info['raw']}\n- index: {export_info['index']}"
+												if export_info.get("samples"):
+													latest_rx_text = latest_rx_text + f"\n- samples: {export_info['samples']}"
+											except Exception as export_exc:
+												latest_status = f"{latest_status} / export failed"
+												latest_rx_text = latest_rx_text + f"\n\nEXPORT ERROR: {export_exc}"
 											self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "done"}}))
 											self.ui_queue.put(("tile_update", tile_id, {"checklist": {"close_session": "in_progress"}}))
 											await asyncio.sleep(0.1)
@@ -745,7 +841,7 @@ class BleCycleWorker:
 								latest_status = "Config hash parse error"
 				except Exception:
 					pass
-				self.ui_queue.put(("tile_update", tile_id, {"status": latest_status, "rx_text": latest_rx_text}))
+				self.ui_queue.put(("tile_update", tile_id, {"status": latest_status, "rx_text": latest_rx_text, "export_info": export_info if "export_info" in locals() else None}))
 
 			try:
 				await client.stop_notify(self.uart_tx_uuid)
@@ -779,8 +875,10 @@ class SimGwV2App:
 		self.tile_counter = 0
 		self.tiles: Dict[int, Dict[str, tk.Label]] = {}
 		self.auto_run = False
+		self.latest_export_info = None
+		self.tile_export_info: Dict[int, dict] = {}
 
-		self.address_prefix_var = tk.StringVar(value="C4:BD:6A")
+		self.address_prefix_var = tk.StringVar(value="C4:BD:6A:01:02:03")
 		self.scan_timeout_var = tk.StringVar(value="60")
 		self.rx_timeout_var = tk.StringVar(value="5")
 		self.mtu_var = tk.StringVar(value="247")
@@ -853,6 +951,7 @@ class SimGwV2App:
 			("Notify Test", "notify_test"),
 		]:
 			ttk.Button(manual, text=text_, command=lambda a=action_: self._start_manual_action(a)).pack(side=tk.LEFT, padx=(0, 6))
+		ttk.Button(manual, text="Plot Latest", command=self._plot_latest_waveform).pack(side=tk.LEFT, padx=(12, 6))
 
 		tiles_frame = tk.Frame(self.root, bg=self.colors["bg"])
 		tiles_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(12, 16))
@@ -980,13 +1079,261 @@ class SimGwV2App:
 		rx_label = tk.Label(body, text="RX: —", bg=self.colors["panel"], fg=self.colors["text"], wraplength=720, justify="left")
 		rx_label.pack(anchor="w", pady=(4, 0))
 
+		plot_btn = ttk.Button(body, text="Plot export", command=lambda tid=tile_id: self._plot_tile_waveform(tid))
+		plot_btn.pack(anchor="w", pady=(6, 0))
+
 		self.tiles[tile_id] = {
 			"status": status_label,
 			"address": address_label,
 			"rx": rx_label,
 			"checklist": checklist_labels,
 			"checklist_titles": checklist_titles,
+			"plot_btn": plot_btn,
 		}
+
+
+	def _plot_tile_waveform(self, tile_id: int) -> None:
+		export_info = self.tile_export_info.get(tile_id)
+		if not export_info:
+			messagebox.showinfo("Waveform plot", f"No export available yet for tile {tile_id}.")
+			return
+		self._plot_waveform_from_export(export_info, title=f"Tile {tile_id}")
+
+	def _plot_latest_waveform(self) -> None:
+		if not self.latest_export_info:
+			messagebox.showinfo("Waveform plot", "No waveform export available yet.")
+			return
+		self._plot_waveform_from_export(self.latest_export_info, title="Latest waveform export")
+
+	def _pb_read_varint(self, buf: bytes, i: int):
+		shift = 0
+		val = 0
+		n = len(buf)
+		while True:
+			if i >= n:
+				raise ValueError("Truncated varint")
+			b = buf[i]
+			i += 1
+			val |= (b & 0x7F) << shift
+			if (b & 0x80) == 0:
+				return val, i
+			shift += 7
+			if shift > 70:
+				raise ValueError("Varint too long")
+
+	def _pb_parse_fields(self, buf: bytes):
+		i = 0
+		n = len(buf)
+		out = []
+		while i < n:
+			tag, i = self._pb_read_varint(buf, i)
+			field_no = tag >> 3
+			wt = tag & 0x07
+			if wt == 0:
+				v, i = self._pb_read_varint(buf, i)
+				out.append((field_no, wt, v))
+			elif wt == 2:
+				ln, i = self._pb_read_varint(buf, i)
+				v = buf[i:i+ln]
+				if len(v) != ln:
+					raise ValueError("Truncated length-delimited field")
+				i += ln
+				out.append((field_no, wt, v))
+			elif wt == 5:
+				v = buf[i:i+4]
+				if len(v) != 4:
+					raise ValueError("Truncated 32-bit field")
+				i += 4
+				out.append((field_no, wt, v))
+			elif wt == 1:
+				v = buf[i:i+8]
+				if len(v) != 8:
+					raise ValueError("Truncated 64-bit field")
+				i += 8
+				out.append((field_no, wt, v))
+			else:
+				raise ValueError(f"Unsupported wire type {wt}")
+		return out
+
+	def _extract_true_twf_samples_from_raw_export(self, raw_path: str):
+		# patch6 export format: repeated [uint32_le payload_len][payload]
+		with open(raw_path, "rb") as f:
+			raw = f.read()
+		off = 0
+		payloads = []
+		while off + 4 <= len(raw):
+			ln = int.from_bytes(raw[off:off+4], "little", signed=False)
+			off += 4
+			p = raw[off:off+ln]
+			if len(p) != ln:
+				break
+			off += ln
+			payloads.append(p)
+
+		# Extract measurement_data.data bytes from AppMessage.data_upload / data_pair / measurement_data
+		blocks = []  # (start_point, bytes)
+		for payload in payloads:
+			try:
+				top = self._pb_parse_fields(payload)
+			except Exception:
+				continue
+			# AppMessage.data_upload observed as field #2 in this protocol export
+			du_list = [v for fn, wt, v in top if fn == 2 and wt == 2]
+			if not du_list:
+				continue
+			du = du_list[0]
+			try:
+				du_fields = self._pb_parse_fields(du)
+			except Exception:
+				continue
+			# data_pair repeated observed as field #4
+			for fn, wt, dp_bytes in du_fields:
+				if fn != 4 or wt != 2:
+					continue
+				try:
+					dp_fields = self._pb_parse_fields(dp_bytes)
+				except Exception:
+					continue
+				# measurement_data observed as field #2 in data_pair
+				md_list = [v for f, w, v in dp_fields if f == 2 and w == 2]
+				for md in md_list:
+					try:
+						md_fields = self._pb_parse_fields(md)
+					except Exception:
+						continue
+					start_point = None
+					data_bytes = None
+					for f, w, v in md_fields:
+						if f == 1 and w == 0:  # start_point
+							start_point = int(v)
+						elif f == 2 and w == 2:  # measurement_data.data
+							data_bytes = bytes(v)
+					if data_bytes:
+						blocks.append((start_point, data_bytes))
+
+		if not blocks:
+			raise RuntimeError("No measurement_data.data blocks found in raw export")
+
+		if all(sp is not None for sp, _ in blocks):
+			blocks.sort(key=lambda x: x[0])
+
+		blob = b"".join(b for _sp, b in blocks)
+		if len(blob) < 2:
+			raise RuntimeError("Waveform blob too small")
+		if (len(blob) % 2) != 0:
+			blob = blob[:-1]
+
+		# VIBRATION_ACC_WAVE from provided docs/com.c is INT16, little-endian bytes on device export
+		count = len(blob) // 2
+		if count <= 0:
+			raise RuntimeError("No int16 samples reconstructed")
+		y = list(struct.unpack("<" + "h" * count, blob))
+		meta = {
+			"blocks": len(blocks),
+			"samples": len(y),
+			"fs_hz": 25600.0,
+			"raw_unit": "int16",
+		}
+		return y, meta
+
+	def _plot_waveform_from_export(self, export_info: dict, title: str = "Waveform") -> None:
+		if plt is None:
+			messagebox.showerror("Waveform plot", "matplotlib is not installed.\nInstall with: pip install matplotlib")
+			return
+		raw_path = export_info.get("raw") if isinstance(export_info, dict) else None
+		samples_path = export_info.get("samples") if isinstance(export_info, dict) else None
+		index_path = export_info.get("index") if isinstance(export_info, dict) else None
+		try:
+			# Preferred path: reconstruct true time waveform from raw protobuf payloads export
+			if raw_path and os.path.exists(raw_path):
+				y, meta = self._extract_true_twf_samples_from_raw_export(raw_path)
+				fs = float(meta.get("fs_hz", 0.0) or 0.0)
+				x = list(range(len(y)))
+				xlabel = "Sample index"
+				if fs > 0.0:
+					x = [i / fs for i in range(len(y))]
+					xlabel = f"Time (s) @ Fs={fs:g} Hz"
+				plt.figure()
+				plt.plot(x, y)
+				plt.title(f"{title} (reconstructed TWF, {meta.get('samples', len(y))} samples)")
+				plt.xlabel(xlabel)
+				plt.ylabel("Acceleration (raw int16)")
+				plt.grid(True)
+				plt.show()
+				return
+
+			# Fallback 1: generic samples.csv plot (debug)
+			if samples_path and os.path.exists(samples_path):
+				with open(samples_path, "r", newline="", encoding="utf-8") as f:
+					r = csv.DictReader(f)
+					rows = list(r)
+				if not rows:
+					raise RuntimeError("samples.csv is empty")
+				numeric_cols = []
+				for h in (r.fieldnames or []):
+					vals = []
+					ok = True
+					for row in rows[: min(len(rows), 200)]:
+						v = row.get(h, "")
+						if v in (None, ""):
+							continue
+						try:
+							vals.append(float(v))
+						except Exception:
+							ok = False
+							break
+					if ok and vals:
+						numeric_cols.append(h)
+				if not numeric_cols:
+					raise RuntimeError("No numeric columns in samples.csv")
+				prefer = [h for h in numeric_cols if h.lower() not in ("block_index", "msg_seq_no", "total_block")]
+				plot_cols = (prefer or numeric_cols)[:4]
+				x = list(range(len(rows)))
+				plt.figure()
+				for col in plot_cols:
+					y = []
+					for row in rows:
+						try:
+							y.append(float(row.get(col, "nan")))
+						except Exception:
+							y.append(float("nan"))
+					plt.plot(x, y, label=col)
+				plt.title(f"{title} (samples.csv fallback)")
+				plt.xlabel("Row")
+				plt.ylabel("Value")
+				if len(plot_cols) > 1:
+					plt.legend()
+				plt.grid(True)
+				plt.show()
+				return
+
+			# Fallback 2: payload lengths only (debug)
+			if index_path and os.path.exists(index_path):
+				with open(index_path, "r", newline="", encoding="utf-8") as f:
+					r = csv.DictReader(f)
+					rows = list(r)
+				if not rows:
+					raise RuntimeError("index.csv is empty")
+				x = []
+				y = []
+				for i, row in enumerate(rows, start=1):
+					x.append(i)
+					try:
+						y.append(float(row.get("payload_len", "nan")))
+					except Exception:
+						y.append(float("nan"))
+				plt.figure()
+				plt.plot(x, y, label="payload_len")
+				plt.title(f"{title} (index payload lengths fallback)")
+				plt.xlabel("Block")
+				plt.ylabel("Payload length")
+				plt.grid(True)
+				plt.legend()
+				plt.show()
+				return
+			raise RuntimeError("No export files found")
+		except Exception as e:
+			messagebox.showerror("Waveform plot", f"Unable to plot waveform: {e}")
 
 	def _poll_queue(self) -> None:
 		try:
@@ -1013,6 +1360,9 @@ class SimGwV2App:
 			tile["address"].configure(text=f"Address: {payload['address']}")
 		if "rx_text" in payload:
 			tile["rx"].configure(text=f"RX: {payload['rx_text']}")
+		if "export_info" in payload and payload["export_info"]:
+			self.tile_export_info[tile_id] = payload["export_info"]
+			self.latest_export_info = payload["export_info"]
 		if "checklist" in payload:
 			state_map = {"pending": "☐", "in_progress": "⧗", "done": "☑"}
 			labels = tile.get("checklist", {})
