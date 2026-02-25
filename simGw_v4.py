@@ -509,11 +509,19 @@ class BleCycleWorker:
 			self.ui_queue.put(("tile_update", tile_id, {"status": f"Error: {type(exc).__name__}: {exc}"}))
 		finally:
 			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"disconnect": "in_progress"}}))
-			if client.is_connected:
-				try:
-					await client.disconnect()
-				except Exception:
-					pass
+			try:
+				if client.is_connected:
+					try:
+						await client.stop_notify(self.uart_tx_uuid)
+					except Exception:
+						pass
+					await asyncio.sleep(0.2)
+					try:
+						await client.disconnect()
+					except Exception:
+						pass
+			except Exception:
+				pass
 			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"disconnect": "done"}}))
 			self.ui_queue.put(("tile_update", tile_id, {"status": "Disconnected"}))
 			self.ui_queue.put(("cycle_done", tile_id))
@@ -867,11 +875,20 @@ class BleCycleWorker:
 			self.ui_queue.put(("tile_update", tile_id, {"status": f"Error: {type(exc).__name__}: {exc}"}))
 		finally:
 			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"disconnect": "in_progress"}}))
-			if client.is_connected:
-				try:
-					await client.disconnect()
-				except Exception:
-					pass
+			try:
+				if client.is_connected:
+					try:
+						await client.stop_notify(self.uart_tx_uuid)
+					except Exception:
+						pass
+					await asyncio.sleep(0.2)
+					try:
+						await client.disconnect()
+					except Exception:
+						pass
+			except Exception:
+				pass
+			# await asyncio.sleep(0.8)
 			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"disconnect": "done"}}))
 			self.ui_queue.put(("tile_update", tile_id, {"status": "Disconnected"}))
 			self.ui_queue.put(("cycle_done", tile_id))
@@ -891,6 +908,9 @@ class SimGwV2App:
 		self.tile_counter = 0
 		self.tiles: Dict[int, Dict[str, tk.Label]] = {}
 		self.auto_run = False
+		self._auto_generation = 0
+		self._auto_cycle_running = False
+		self._auto_active_tile_id = None
 		self.latest_export_info = None
 		self.tile_export_info: Dict[int, dict] = {}
 
@@ -941,8 +961,10 @@ class SimGwV2App:
 
 		self.start_button = ttk.Button(controls, text="Start", style="Accent.TButton", command=self._on_start)
 		self.start_button.pack(side=tk.TOP, pady=(0, 6))
-		self.stop_auto_button = ttk.Button(controls, text="Stop Auto", command=lambda: setattr(self, "auto_run", False))
-		self.stop_auto_button.pack(side=tk.TOP)
+		self.stop_auto_button = ttk.Button(controls, text="Stop Auto", command=self._stop_auto)
+		self.stop_auto_button.pack(side=tk.TOP, pady=(0, 6))
+		self.clear_logs_button = ttk.Button(controls, text="Clear Logs", command=self._clear_tiles)
+		self.clear_logs_button.pack(side=tk.TOP)
 
 		form = tk.Frame(self.root, bg=self.colors["bg"])
 		form.pack(fill=tk.X, padx=16)
@@ -1004,15 +1026,7 @@ class SimGwV2App:
 		direction = -1 if event.delta > 0 else 1
 		self.canvas.yview_scroll(direction, "units")
 
-	def _on_start(self) -> None:
-		self.auto_run = True
-		self._start_cycle()
-
-	def _start_cycle(self) -> None:
-		self.tile_counter += 1
-		tile_id = self.tile_counter
-		self._create_tile(tile_id)
-
+	def _read_runtime_params(self) -> tuple:
 		address_prefix = self.address_prefix_var.get().strip() or "C4:BD:6A"
 		try:
 			mtu = int(self.mtu_var.get())
@@ -1026,28 +1040,66 @@ class SimGwV2App:
 			rx_timeout = float(self.rx_timeout_var.get())
 		except ValueError:
 			rx_timeout = 5.0
+		return address_prefix, mtu, scan_timeout, rx_timeout
 
+	def _clear_tiles(self) -> None:
+		self._stop_auto()
+		for tile in list(self.tiles.values()):
+			card = tile.get("card")
+			if card is not None:
+				try:
+					card.destroy()
+				except Exception:
+					pass
+		self.tiles.clear()
+		self.tile_export_info.clear()
+		self.latest_export_info = None
+		self.tile_counter = 0
+
+	def _on_start(self) -> None:
+		self.auto_run = True
+		self._auto_generation += 1
+		self._auto_cycle_running = False
+		self._auto_active_tile_id = None
+		self._start_cycle(expected_generation=self._auto_generation)
+
+	def _start_cycle(self, expected_generation: int = None) -> None:
+		if not self.auto_run:
+			return
+		if expected_generation is not None and expected_generation != self._auto_generation:
+			return
+		if self._auto_cycle_running:
+			return
+		self._auto_cycle_running = True
+		self.tile_counter += 1
+		tile_id = self.tile_counter
+		self._auto_active_tile_id = tile_id
+		self._create_tile(tile_id)
+
+		address_prefix, mtu, scan_timeout, rx_timeout = self._read_runtime_params()
 		self.worker.run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout)
 
 	def _start_manual_action(self, action: str) -> None:
 		self.auto_run = False
+		self._auto_generation += 1
+		self._auto_cycle_running = False
+		self._auto_active_tile_id = None
 		self.tile_counter += 1
 		tile_id = self.tile_counter
 		self._create_tile(tile_id)
-		address_prefix = self.address_prefix_var.get().strip() or "C4:BD:6A"
-		try:
-			mtu = int(self.mtu_var.get())
-		except ValueError:
-			mtu = 247
-		try:
-			scan_timeout = float(self.scan_timeout_var.get())
-		except ValueError:
-			scan_timeout = 6.0
-		try:
-			rx_timeout = float(self.rx_timeout_var.get())
-		except ValueError:
-			rx_timeout = 5.0
+		address_prefix, mtu, scan_timeout, rx_timeout = self._read_runtime_params()
 		self.worker.run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action)
+
+	def _stop_auto(self) -> None:
+		self.auto_run = False
+		self._auto_generation += 1
+		self._auto_cycle_running = False
+		self._auto_active_tile_id = None
+
+	def _schedule_next_auto(self, generation: int) -> None:
+		def _cb() -> None:
+			self._start_cycle(expected_generation=generation)
+		self.root.after(1500, _cb)
 
 	def _create_tile(self, tile_id: int) -> None:
 		card = tk.Frame(
@@ -1099,6 +1151,7 @@ class SimGwV2App:
 		plot_btn.pack(anchor="w", pady=(6, 0))
 
 		self.tiles[tile_id] = {
+			"card": card,
 			"status": status_label,
 			"address": address_label,
 			"rx": rx_label,
@@ -1359,8 +1412,12 @@ class SimGwV2App:
 					_, tile_id, payload = event
 					self._apply_tile_update(tile_id, payload)
 				elif event[0] == "cycle_done":
-					if self.auto_run:
-						self.root.after(100, self._start_cycle)
+					_, done_tile_id = event
+					if done_tile_id == self._auto_active_tile_id:
+						self._auto_cycle_running = False
+						self._auto_active_tile_id = None
+						if self.auto_run:
+							self._schedule_next_auto(self._auto_generation)
 				self.ui_queue.task_done()
 		except Empty:
 			pass
