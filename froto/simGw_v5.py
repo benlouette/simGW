@@ -14,6 +14,63 @@ from typing import Dict, Optional
 from google.protobuf import text_format
 from bleak import BleakClient, BleakScanner
 
+
+class SessionRecorder:
+	"""
+	Writes a per-session log folder with:
+	- events.csv: timestamp, direction, kind, msg_type, length, hex_short
+	- events.txt: human-readable lines
+	- rx_tx.bin: raw frames (dir byte + uint32_le length + payload)
+	"""
+	def __init__(self, root_dir: str, session_name: str):
+		self.root_dir = root_dir
+		self.session_name = session_name
+		self.session_dir = os.path.join(root_dir, session_name)
+		os.makedirs(self.session_dir, exist_ok=True)
+
+		self.csv_path = os.path.join(self.session_dir, "events.csv")
+		self.txt_path = os.path.join(self.session_dir, "events.txt")
+		self.bin_path = os.path.join(self.session_dir, "rx_tx.bin")
+
+		self._csv_f = open(self.csv_path, "w", newline="", encoding="utf-8")
+		self._csv = csv.writer(self._csv_f)
+		self._csv.writerow(["ts_ms", "dir", "kind", "msg_type", "len", "hex_short"])
+
+		self._txt_f = open(self.txt_path, "w", encoding="utf-8")
+		self._bin_f = open(self.bin_path, "wb")
+
+	def close(self):
+		for f in (getattr(self, "_csv_f", None), getattr(self, "_txt_f", None), getattr(self, "_bin_f", None)):
+			try:
+				if f is not None:
+					f.close()
+			except Exception:
+				pass
+
+	def log(self, direction: str, kind: str, msg_type: str, payload: bytes):
+		ts_ms = int(time.time() * 1000)
+		hex_short = " ".join(f"{b:02X}" for b in payload[:24])
+		if len(payload) > 24:
+			hex_short += " …"
+
+		self._csv.writerow([ts_ms, direction, kind, msg_type, len(payload), hex_short])
+		self._csv_f.flush()
+
+		self._txt_f.write(f"{ts_ms} {direction} {kind} {msg_type} len={len(payload)} hex={hex_short}\n")
+		self._txt_f.flush()
+
+		# dir byte: 0=RX, 1=TX, 2=EVT
+		dir_b = 0 if direction == "RX" else (1 if direction == "TX" else 2)
+		self._bin_f.write(bytes([dir_b]))
+		self._bin_f.write(struct.pack("<I", len(payload)))
+		self._bin_f.write(payload)
+		self._bin_f.flush()
+
+	def log_text(self, text: str):
+		ts_ms = int(time.time() * 1000)
+		self._txt_f.write(f"{ts_ms} EVT {text}\n")
+		self._txt_f.flush()
+
 try:
 	import matplotlib.pyplot as plt
 except Exception:
@@ -251,11 +308,82 @@ class BleCycleWorker:
 	def _call_soon(self, coro: asyncio.Future) -> None:
 		asyncio.run_coroutine_threadsafe(coro, self.loop)
 
-	def run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float) -> None:
-		self._call_soon(self._run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout))
+	def run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
+				name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "") -> None:
+		self._call_soon(self._run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root,
+						name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains))
 
-	def run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str) -> None:
-		self._call_soon(self._run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action))
+	def run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str, record_sessions: bool, session_root: str,
+				name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "") -> None:
+		self._call_soon(self._run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root,
+						name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains))
+
+	def _adv_matches(self, device, adv, address_prefix: str, name_contains: str, service_uuid_contains: str,
+					mfg_id_hex: str, mfg_data_hex_contains: str) -> bool:
+		"""
+		Match a device against address prefix + optional advertising-content filters.
+		All non-empty filters must match.
+		"""
+		try:
+			addr = (getattr(device, "address", "") or "").upper()
+		except Exception:
+			addr = ""
+		if address_prefix:
+			if not addr.startswith(address_prefix.upper()):
+				return False
+
+		# Name filter (device.name or adv.local_name)
+		if name_contains:
+			nc = name_contains.lower()
+			dn = (getattr(device, "name", None) or "").lower()
+			aln = (getattr(adv, "local_name", None) if adv is not None else None) or ""
+			if (nc not in dn) and (nc not in aln.lower()):
+				return False
+
+		# Service UUID contains (substring match on any advertised UUID)
+		if service_uuid_contains:
+			svc_sub = service_uuid_contains.lower()
+			uuids = []
+			if adv is not None:
+				uuids = list(getattr(adv, "service_uuids", None) or [])
+			if not any(svc_sub in (u or "").lower() for u in uuids):
+				return False
+
+		# Manufacturer ID + data filters
+		if mfg_id_hex or mfg_data_hex_contains:
+			mfg = {}
+			if adv is not None:
+				mfg = getattr(adv, "manufacturer_data", None) or {}
+
+			# normalize mfg id
+			mfg_id = None
+			if mfg_id_hex:
+				s = mfg_id_hex.strip().lower().replace("0x", "")
+				try:
+					mfg_id = int(s, 16)
+				except ValueError:
+					# invalid filter -> no match
+					return False
+				if mfg_id not in mfg:
+					return False
+
+			if mfg_data_hex_contains:
+				needle = mfg_data_hex_contains.strip().lower().replace("0x", "").replace(" ", "")
+				# allow commas
+				needle = needle.replace(",", "")
+				if needle:
+					found = False
+					items = mfg.items() if mfg_id is None else [(mfg_id, mfg.get(mfg_id, b""))]
+					for _, v in items:
+						vb = bytes(v) if not isinstance(v, (bytes, bytearray)) else bytes(v)
+						h = vb.hex().lower()
+						if needle in h:
+							found = True
+							break
+					if not found:
+						return False
+
+		return True
 
 	def _format_rx_payload(self, payload: bytes) -> str:
 		try:
@@ -341,17 +469,32 @@ class BleCycleWorker:
 			samples_path = ""
 		return {"raw": raw_path, "index": idx_path, "samples": samples_path, "count": len(payloads)}
 
-	async def _run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str) -> None:
+	async def _run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str, record_sessions: bool, session_root: str,
+							name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "") -> None:
 		address_prefix = address_prefix.upper()
+		name_contains = (name_contains or "").strip()
+		service_uuid_contains = (service_uuid_contains or "").strip()
+		mfg_id_hex = (mfg_id_hex or "").strip()
+		mfg_data_hex_contains = (mfg_data_hex_contains or "").strip()
+		# Per-session recorder
+		recorder = None
+		session_dir = None
+		if record_sessions:
+			ts = time.strftime("%Y%m%d_%H%M%S")
+			session_name = f"sensor{tile_id}_{ts}_{action}"
+			recorder = SessionRecorder(session_root, session_name)
+			session_dir = recorder.session_dir
+			self.ui_queue.put(("tile_update", tile_id, {"session_dir": session_dir}))
+			recorder.log_text(f"manual_start:{action}")
 		self.ui_queue.put(("tile_update", tile_id, {"status": f"Manual: {action} / scanning..."}))
 		self.ui_queue.put(("tile_update", tile_id, {"checklist": {"waiting_connection": "in_progress"}}))
 		matched_device = {"value": None}
 		found_event = asyncio.Event()
 
-		def _on_device_found(device, _advertisement_data):
-			if not device.address:
+		def _on_device_found(device, advertisement_data):
+			if not getattr(device, "address", None):
 				return
-			if device.address.upper().startswith(address_prefix):
+			if self._adv_matches(device, advertisement_data, address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains):
 				if not found_event.is_set():
 					matched_device["value"] = device
 					found_event.set()
@@ -370,6 +513,9 @@ class BleCycleWorker:
 		matched = matched_device["value"]
 		if not matched:
 			self.ui_queue.put(("tile_update", tile_id, {"status": "Not found", "address": "—"}))
+			if recorder is not None:
+				recorder.log_text("not_found")
+				recorder.close()
 			return
 
 		self.ui_queue.put(("tile_update", tile_id, {"status": f"Manual: {action} / connecting...", "address": matched.address}))
@@ -379,8 +525,11 @@ class BleCycleWorker:
 
 		def _on_notify(_sender: int, data: bytearray) -> None:
 			try:
-				rx_queue.append(bytes(data))
+				payload = bytes(data)
+				rx_queue.append(payload)
 				rx_event.set()
+				if recorder is not None:
+					recorder.log("RX", "notify", self._pb_message_type(payload), payload)
 			except Exception:
 				pass
 
@@ -408,6 +557,8 @@ class BleCycleWorker:
 		async def _write_app_message(app_msg) -> bytes:
 			payload = app_msg.SerializeToString()
 			await client.write_gatt_char(self.uart_rx_uuid, payload)
+			if recorder is not None:
+				recorder.log("TX", "write", self._pb_message_type(payload), payload)
 			self.ui_queue.put(("tile_update", tile_id, {"status": f"TX {self._pb_message_type(payload)} ({len(payload)} B)"}))
 			return payload
 
@@ -502,6 +653,8 @@ class BleCycleWorker:
 
 		try:
 			await client.connect()
+			if recorder is not None:
+				recorder.log_text(f"connected:{matched.address}")
 			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"waiting_connection": "done", "connected": "done"}}))
 			if mtu and hasattr(client, "request_mtu"):
 				try:
@@ -683,21 +836,39 @@ class BleCycleWorker:
 						pass
 			except Exception:
 				pass
+			if recorder is not None:
+				recorder.log_text("disconnect_done")
+				recorder.close()
 			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"disconnect": "done"}}))
 			self.ui_queue.put(("tile_update", tile_id, {"status": "Disconnected"}))
 			self.ui_queue.put(("cycle_done", tile_id))
 
-	async def _run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float) -> None:
+	async def _run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
+						name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "") -> None:
 		address_prefix = address_prefix.upper()
+		name_contains = (name_contains or "").strip()
+		service_uuid_contains = (service_uuid_contains or "").strip()
+		mfg_id_hex = (mfg_id_hex or "").strip()
+		mfg_data_hex_contains = (mfg_data_hex_contains or "").strip()
+		# Per-session recorder
+		recorder = None
+		session_dir = None
+		if record_sessions:
+			ts = time.strftime("%Y%m%d_%H%M%S")
+			session_name = f"sensor{tile_id}_{ts}_auto"
+			recorder = SessionRecorder(session_root, session_name)
+			session_dir = recorder.session_dir
+			self.ui_queue.put(("tile_update", tile_id, {"session_dir": session_dir}))
+			recorder.log_text("cycle_start")
 		self.ui_queue.put(("tile_update", tile_id, {"status": "Scanning..."}))
 		self.ui_queue.put(("tile_update", tile_id, {"checklist": {"waiting_connection": "in_progress"}}))
 		matched_device = {"value": None}
 		found_event = asyncio.Event()
 
-		def _on_device_found(device, _advertisement_data):
-			if not device.address:
+		def _on_device_found(device, advertisement_data):
+			if not getattr(device, "address", None):
 				return
-			if device.address.upper().startswith(address_prefix):
+			if self._adv_matches(device, advertisement_data, address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains):
 				if not found_event.is_set():
 					matched_device["value"] = device
 					found_event.set()
@@ -716,6 +887,9 @@ class BleCycleWorker:
 		matched = matched_device["value"]
 		if not matched:
 			self.ui_queue.put(("tile_update", tile_id, {"status": "Not found", "address": "—"}))
+			if recorder is not None:
+				recorder.log_text("not_found")
+				recorder.close()
 			return
 
 		self.ui_queue.put(("tile_update", tile_id, {"status": "Connecting...", "address": matched.address}))
@@ -725,8 +899,11 @@ class BleCycleWorker:
 
 		def _on_notify(_sender: int, data: bytearray) -> None:
 			try:
-				rx_queue.append(bytes(data))
+				payload = bytes(data)
+				rx_queue.append(payload)
 				rx_event.set()
+				if recorder is not None:
+					recorder.log("RX", "notify", self._pb_message_type(payload), payload)
 			except Exception:
 				pass
 
@@ -754,6 +931,8 @@ class BleCycleWorker:
 		async def _write_app_message(app_msg) -> bytes:
 			payload = app_msg.SerializeToString()
 			await client.write_gatt_char(self.uart_rx_uuid, payload)
+			if recorder is not None:
+				recorder.log("TX", "write", self._pb_message_type(payload), payload)
 			self.ui_queue.put(("tile_update", tile_id, {
 				"status": f"TX {self._pb_message_type(payload)} ({len(payload)} B)",
 			}))
@@ -859,6 +1038,8 @@ class BleCycleWorker:
 
 		try:
 			await client.connect()
+			if recorder is not None:
+				recorder.log_text(f"connected:{matched.address}")
 			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"waiting_connection": "done", "connected": "done"}}))
 			if mtu and hasattr(client, "request_mtu"):
 				try:
@@ -1050,6 +1231,9 @@ class BleCycleWorker:
 			except Exception:
 				pass
 			# await asyncio.sleep(0.8)
+			if recorder is not None:
+				recorder.log_text("disconnect_done")
+				recorder.close()
 			self.ui_queue.put(("tile_update", tile_id, {"checklist": {"disconnect": "done"}}))
 			self.ui_queue.put(("tile_update", tile_id, {"status": "Disconnected"}))
 			self.ui_queue.put(("cycle_done", tile_id))
@@ -1075,9 +1259,16 @@ class SimGwV2App:
 		self.latest_export_info = None
 		self.tile_export_info: Dict[int, dict] = {}
 
-		self.address_prefix_var = tk.StringVar(value="C4:BD:6A:01:02:03")
+		self.address_prefix_var = tk.StringVar(value="C4:BD:6A:")
+		# Optional advertising-content filter (applied in addition to address prefix when set)
+		self.adv_name_contains_var = tk.StringVar(value="IMx-1_ELO")
+		self.adv_service_uuid_contains_var = tk.StringVar(value="")
+		self.adv_mfg_id_hex_var = tk.StringVar(value="")  # e.g. "004C" or "0x004C"
+		self.adv_mfg_data_hex_contains_var = tk.StringVar(value="")  # e.g. "01 02" or "0102"
 		self.scan_timeout_var = tk.StringVar(value="60")
 		self.rx_timeout_var = tk.StringVar(value="5")
+		self.record_sessions_var = tk.BooleanVar(value=True)
+		self.session_root_var = tk.StringVar(value="sessions")
 		self.mtu_var = tk.StringVar(value="247")
 
 		self._apply_theme()
@@ -1127,13 +1318,25 @@ class SimGwV2App:
 		self.clear_logs_button = ttk.Button(controls, text="Clear Logs", command=self._clear_tiles)
 		self.clear_logs_button.pack(side=tk.TOP)
 
+		self.dump_adv_button = ttk.Button(controls, text="Dump ADV", command=self._on_dump_adv)
+		self.dump_adv_button.pack(side=tk.TOP, pady=(6, 0))
+
+		self.record_sessions_check = ttk.Checkbutton(controls, text="Record sessions", variable=self.record_sessions_var)
+		self.record_sessions_check.pack(side=tk.TOP, pady=(8, 0))
+
 		form = tk.Frame(self.root, bg=self.colors["bg"])
 		form.pack(fill=tk.X, padx=16)
 
 		self._build_field(form, "Address prefix", self.address_prefix_var)
+		# Optional advertising filters (leave empty to disable)
+		self._build_field(form, "ADV name contains", self.adv_name_contains_var)
+		self._build_field(form, "ADV service UUID contains", self.adv_service_uuid_contains_var)
+		self._build_field(form, "ADV mfg id (hex)", self.adv_mfg_id_hex_var, width=10)
+		self._build_field(form, "ADV mfg data contains (hex)", self.adv_mfg_data_hex_contains_var)
 		self._build_field(form, "MTU", self.mtu_var, width=8)
 		self._build_field(form, "Scan timeout (s)", self.scan_timeout_var, width=8)
 		self._build_field(form, "RX timeout (s)", self.rx_timeout_var, width=8)
+		self._build_field(form, "Session dir", self.session_root_var, width=18)
 
 		manual = tk.Frame(self.root, bg=self.colors["bg"])
 		manual.pack(fill=tk.X, padx=16, pady=(8, 0))
@@ -1190,11 +1393,17 @@ class SimGwV2App:
 			return default
 
 	def _read_runtime_params(self) -> tuple:
-		address_prefix = self.address_prefix_var.get().strip() or "C4:BD:6A"
+		address_prefix = self.address_prefix_var.get().strip()
 		mtu = self._parse_int_var(self.mtu_var, 247)
 		scan_timeout = self._parse_float_var(self.scan_timeout_var, 6.0)
 		rx_timeout = self._parse_float_var(self.rx_timeout_var, 5.0)
-		return address_prefix, mtu, scan_timeout, rx_timeout
+		record_sessions = bool(self.record_sessions_var.get())
+		session_root = self.session_root_var.get().strip() or "sessions"
+		name_contains = self.adv_name_contains_var.get().strip()
+		service_uuid_contains = self.adv_service_uuid_contains_var.get().strip()
+		mfg_id_hex = self.adv_mfg_id_hex_var.get().strip()
+		mfg_data_hex_contains = self.adv_mfg_data_hex_contains_var.get().strip()
+		return address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains
 
 	def _safe_destroy(self, widget) -> None:
 		if widget is None:
@@ -1227,11 +1436,11 @@ class SimGwV2App:
 		return tile_id
 
 	def _start_worker_cycle(self, tile_id: int, action: str = None) -> None:
-		address_prefix, mtu, scan_timeout, rx_timeout = self._read_runtime_params()
+		address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains = self._read_runtime_params()
 		if action is None:
-			self.worker.run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout)
+			self.worker.run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains)
 		else:
-			self.worker.run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action)
+			self.worker.run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains)
 
 	def _on_start(self) -> None:
 		self._reset_auto_state()
@@ -1287,6 +1496,9 @@ class SimGwV2App:
 		address_label = tk.Label(body, text="Address: —", bg=self.colors["panel"], fg=self.colors["muted"])
 		address_label.pack(anchor="w")
 
+		session_label = tk.Label(body, text="Session: —", bg=self.colors["panel"], fg=self.colors["muted"])
+		session_label.pack(anchor="w")
+
 		checklist_frame = tk.Frame(body, bg=self.colors["panel"])
 		checklist_frame.pack(anchor="w", pady=(6, 2))
 
@@ -1309,6 +1521,7 @@ class SimGwV2App:
 			"card": card,
 			"status": status_label,
 			"address": address_label,
+			"session": session_label,
 			"rx": rx_label,
 			"checklist": checklist_labels,
 			"checklist_titles": checklist_titles,
@@ -1468,6 +1681,8 @@ class SimGwV2App:
 			tile["status"].configure(text=payload["status"])
 		if "address" in payload:
 			tile["address"].configure(text=f"Address: {payload['address']}")
+		if "session_dir" in payload:
+			tile["session"].configure(text=f"Session: {payload['session_dir']}")
 		if "rx_text" in payload:
 			tile["rx"].configure(text=f"RX: {payload['rx_text']}")
 		if "export_info" in payload and payload["export_info"]:
@@ -1482,6 +1697,219 @@ class SimGwV2App:
 				if label:
 					symbol = CHECKLIST_STATE_MAP.get(state, "☐")
 					label.configure(text=f"{symbol} {title}")
+
+
+	def _on_dump_adv(self) -> None:
+		"""Scan and display advertising data in a readable window."""
+		# Disable button while scanning
+		try:
+			self.dump_adv_button.configure(state="disabled")
+		except Exception:
+			pass
+
+		address_prefix, _mtu, scan_timeout, _rx_timeout, _record_sessions, _session_root, name_contains, svc_contains, mfg_id_hex, mfg_data_hex = self._read_runtime_params()
+
+		# Normalize filters
+		addr_prefix = (address_prefix or "").strip().upper()
+		name_contains = (name_contains or "").strip()
+		svc_contains = (svc_contains or "").strip().lower()
+
+		mfg_id = None
+		mfg_id_hex = (mfg_id_hex or "").strip().lower()
+		if mfg_id_hex:
+			mfg_id_hex = mfg_id_hex.replace("0x", "")
+			try:
+				mfg_id = int(mfg_id_hex, 16)
+			except ValueError:
+				mfg_id = None
+
+		mfg_data_sub = b""
+		mfg_data_hex = (mfg_data_hex or "").strip().lower().replace("0x", "")
+		if mfg_data_hex:
+			mfg_data_hex = "".join(ch for ch in mfg_data_hex if ch in "0123456789abcdef")
+			try:
+				mfg_data_sub = bytes.fromhex(mfg_data_hex)
+			except ValueError:
+				mfg_data_sub = b""
+
+		# Create window immediately
+		win = tk.Toplevel(self.root)
+		win.title("Advertising dump")
+		win.geometry("980x700")
+		win.configure(bg=self.colors["bg"])
+
+		header = tk.Frame(win, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+		header.pack(fill=tk.X, padx=12, pady=12)
+
+		tk.Label(header, text="Advertising dump", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 2))
+		tk.Label(header, text="Scan running...").pack(anchor="w", padx=12, pady=(0, 10))
+
+		body = tk.Frame(win, bg=self.colors["bg"])
+		body.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+
+		text = tk.Text(body, wrap="none", bg=self.colors["panel_alt"], fg=self.colors["text"], insertbackground=self.colors["text"])
+		text.pack(fill=tk.BOTH, expand=True)
+
+		btns = tk.Frame(win, bg=self.colors["bg"])
+		btns.pack(fill=tk.X, padx=12, pady=(0, 12))
+
+		def _copy():
+			try:
+				data = text.get("1.0", tk.END)
+				self.root.clipboard_clear()
+				self.root.clipboard_append(data)
+			except Exception:
+				pass
+
+		ttk.Button(btns, text="Copy", command=_copy).pack(side=tk.LEFT)
+
+		async def _scan_adv():
+			from bleak import BleakScanner
+			res = await BleakScanner.discover(timeout=scan_timeout, return_adv=True)
+			pairs = []
+			if isinstance(res, dict):
+				for _addr, val in res.items():
+					if isinstance(val, tuple) and len(val) == 2:
+						dev, adv = val
+					else:
+						dev, adv = val, None
+					pairs.append((dev, adv))
+			elif isinstance(res, list):
+				for item in res:
+					if isinstance(item, tuple) and len(item) == 2:
+						dev, adv = item
+					else:
+						dev, adv = item, None
+					pairs.append((dev, adv))
+			return pairs
+
+		def _matches(dev, adv) -> bool:
+			# Address prefix
+			addr = ""
+			if isinstance(dev, str):
+				addr = dev
+			else:
+				addr = getattr(dev, "address", "") or ""
+			addr_u = addr.upper()
+			if addr_prefix and not addr_u.startswith(addr_prefix):
+				return False
+
+			# Name contains
+			if name_contains:
+				n1 = (getattr(dev, "name", "") or "") if not isinstance(dev, str) else ""
+				n2 = (getattr(adv, "local_name", "") or "") if adv is not None else ""
+				combo = (n1 + " " + n2).lower()
+				if name_contains.lower() not in combo:
+					return False
+
+			# Service UUID contains
+			if svc_contains:
+				uus = []
+				if adv is not None and getattr(adv, "service_uuids", None):
+					uus = list(getattr(adv, "service_uuids", []) or [])
+				joined = " ".join(u.lower() for u in uus)
+				if svc_contains not in joined:
+					return False
+
+			# Manufacturer data filters
+			if mfg_id is not None or mfg_data_sub:
+				md = getattr(adv, "manufacturer_data", None) if adv is not None else None
+				md = md or {}
+				if mfg_id is not None:
+					if mfg_id not in md:
+						return False
+					if mfg_data_sub:
+						payload = bytes(md.get(mfg_id, b"")) if md.get(mfg_id) is not None else b""
+						if mfg_data_sub not in payload:
+							return False
+				else:
+					# mfg id not specified: match any payload containing substring
+					if mfg_data_sub:
+						ok = False
+						for _k, _v in md.items():
+							payload = bytes(_v) if _v is not None else b""
+							if mfg_data_sub in payload:
+								ok = True
+								break
+						if not ok:
+							return False
+
+			return True
+
+		def _render(pairs):
+			# Sort by RSSI when available
+			def rssi_of(item):
+				_dev, _adv = item
+				r = getattr(_adv, "rssi", None) if _adv is not None else None
+				return r if isinstance(r, int) else -999
+			pairs2 = [p for p in pairs if _matches(p[0], p[1])]
+			pairs2.sort(key=rssi_of, reverse=True)
+
+			lines = []
+			lines.append(f"Filters: addr_prefix={addr_prefix or '-'} name_contains={name_contains or '-'} svc_contains={svc_contains or '-'} mfg_id={('0x%04X'%mfg_id) if mfg_id is not None else '-'} mfg_data_sub={(mfg_data_sub.hex() if mfg_data_sub else '-')}")
+			lines.append("")
+
+			for dev, adv in pairs2:
+				if isinstance(dev, str):
+					addr = dev
+					name = "<?>"
+				else:
+					addr = getattr(dev, "address", "") or ""
+					name = getattr(dev, "name", "") or "<?>"
+
+				local_name = getattr(adv, "local_name", None) if adv is not None else None
+				rssi = getattr(adv, "rssi", None) if adv is not None else None
+				tx = getattr(adv, "tx_power", None) if adv is not None else None
+				svcs = getattr(adv, "service_uuids", None) if adv is not None else None
+				svcs = svcs or []
+				md = getattr(adv, "manufacturer_data", None) if adv is not None else None
+				md = md or {}
+				sd = getattr(adv, "service_data", None) if adv is not None else None
+				sd = sd or {}
+
+				lines.append("=" * 72)
+				lines.append(f"Address: {addr}")
+				lines.append(f"Name   : {name}")
+				if local_name:
+					lines.append(f"Local  : {local_name}")
+				lines.append(f"RSSI   : {rssi}")
+				lines.append(f"TX Pwr : {tx}")
+				if svcs:
+					lines.append("Service UUIDs:")
+					for u in svcs:
+						lines.append(f"  - {u}")
+				if md:
+					lines.append("Manufacturer data:")
+					for k, v in md.items():
+						payload = bytes(v) if v is not None else b""
+						lines.append(f"  - 0x{k:04X}: {payload.hex()}")
+				if sd:
+					lines.append("Service data:")
+					for k, v in sd.items():
+						payload = bytes(v) if v is not None else b""
+						lines.append(f"  - {k}: {payload.hex()}")
+			lines.append("=" * 72)
+			lines.append(f"Matched devices: {len(pairs2)}")
+
+			text.delete("1.0", tk.END)
+			text.insert(tk.END, "\n".join(lines))
+			text.see("1.0")
+
+			try:
+				self.dump_adv_button.configure(state="normal")
+			except Exception:
+				pass
+
+		def thread_main():
+			try:
+				pairs = asyncio.run(_scan_adv())
+			except Exception as e:
+				pairs = []
+				self.root.after(0, lambda: text.insert(tk.END, f"Scan failed: {e}\n"))
+			self.root.after(0, lambda: _render(pairs))
+
+		threading.Thread(target=thread_main, daemon=True).start()
+
 
 
 def main() -> None:
