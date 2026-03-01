@@ -348,6 +348,10 @@ class BleCycleWorker:
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.uart_service_uuid, self.uart_rx_uuid, self.uart_tx_uuid = _get_uart_uuids(True)
         self._tile_phase_rank = {}  # tile_id -> last phase rank
+        # Hard-stop support (cancellation)
+        self._cancel_lock = threading.Lock()
+        self._cancel_all = False
+        self._cancel_tiles = set()
 
     
     def start(self) -> None:
@@ -367,30 +371,52 @@ class BleCycleWorker:
         """Schedule a coroutine on the worker loop."""
         asyncio.run_coroutine_threadsafe(coro, self.loop)
 
+    
+    # --- Hard-stop API (called from UI thread) ---
+    def request_cancel_all(self) -> None:
+        """Request cancellation of any in-flight scan/connect/download operations."""
+        with self._cancel_lock:
+            self._cancel_all = True
+            self._cancel_tiles.clear()
+
+    def clear_cancel_all(self) -> None:
+        """Clear any pending cancellation request."""
+        with self._cancel_lock:
+            self._cancel_all = False
+            self._cancel_tiles.clear()
+
+    def request_cancel_tile(self, tile_id: int) -> None:
+        with self._cancel_lock:
+            self._cancel_tiles.add(int(tile_id))
+
+    def _is_cancelled(self, tile_id: int) -> bool:
+        with self._cancel_lock:
+            return self._cancel_all or (int(tile_id) in self._cancel_tiles)
+
     def _emit(self, tile_id: int, payload: dict) -> None:
-            """Centralized UI emitter for tile updates.
-            Adds ts_ms automatically. Never raises.
-            Also enforces a monotonic 'phase' progression per tile (best-effort).
-            """
-            try:
-                out = dict(payload) if payload is not None else {}
-                out.setdefault("ts_ms", int(time.time() * 1000))
+                """Centralized UI emitter for tile updates.
+                Adds ts_ms automatically. Never raises.
+                Also enforces a monotonic 'phase' progression per tile (best-effort).
+                """
+                try:
+                    out = dict(payload) if payload is not None else {}
+                    out.setdefault("ts_ms", int(time.time() * 1000))
 
-                # Keep phase monotonic per tile to avoid confusing UI regressions.
-                if "phase" in out and out["phase"]:
-                    pr = _phase_rank(str(out["phase"]))
-                    prev = self._tile_phase_rank.get(tile_id, -1)
-                    if pr >= 0:
-                        if prev >= 0 and pr < prev:
-                            # Don't regress; keep the last known phase.
-                            out["phase"] = _PHASE_ORDER[prev]
-                        else:
-                            self._tile_phase_rank[tile_id] = pr
+                    # Keep phase monotonic per tile to avoid confusing UI regressions.
+                    if "phase" in out and out["phase"]:
+                        pr = _phase_rank(str(out["phase"]))
+                        prev = self._tile_phase_rank.get(tile_id, -1)
+                        if pr >= 0:
+                            if prev >= 0 and pr < prev:
+                                # Don't regress; keep the last known phase.
+                                out["phase"] = _PHASE_ORDER[prev]
+                            else:
+                                self._tile_phase_rank[tile_id] = pr
 
-                self.ui_queue.put(("tile_update", tile_id, out))
-            except Exception:
-                # Never crash worker on UI update failure
-                pass
+                    self.ui_queue.put(("tile_update", tile_id, out))
+                except Exception:
+                    # Never crash worker on UI update failure
+                    pass
 
 
     async def _run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
@@ -625,102 +651,238 @@ class BleCycleWorker:
 
     def _extract_overall_values(self, data_upload_msg) -> list:
         """
-        Extract all (available) measurement values from an overall data_upload message
-        into a list of dicts: [{'label': str, 'value': str}, ...]
-        Robust to proto changes by using reflection + text_format as fallback.
+        Extract overall/metrics values from a data_upload message.
+
+        IMPORTANT: for many firmwares the value is stored as bytes in:
+            data_pair.measurement_data.data
+        and the format is described by:
+            data_pair.measurement.data_format
+
+        This function decodes those bytes (raw, no unit conversion) and falls back to
+        reflection/text_format when bytes are not present.
         """
+        import struct
+
+        def _enum_name_from_int(enum_desc, number: int) -> str:
+            try:
+                return enum_desc.values_by_number[int(number)].name
+            except Exception:
+                return str(number)
+
+        def _data_format_to_struct_code(fmt_name: str):
+            # Return (struct_code, bytes_per_sample) or (None, None)
+            m = {
+                "FORMAT_INT8": ("b", 1),
+                "FORMAT_UINT8": ("B", 1),
+                "FORMAT_INT16": ("h", 2),
+                "FORMAT_UINT16": ("H", 2),
+                "FORMAT_INT32": ("i", 4),
+                "FORMAT_UINT32": ("I", 4),
+                "FORMAT_FLOAT32": ("f", 4),
+                "FORMAT_FLOAT": ("f", 4),
+                "FORMAT_DOUBLE64": ("d", 8),
+                "FORMAT_DOUBLE": ("d", 8),
+            }
+            return m.get(fmt_name, (None, None))
+
+        def _get_pair_measure_type_token(pair) -> str:
+            """Return enum token name for measurement.measure_type."""
+            try:
+                meas = getattr(pair, "measurement", None)
+                if meas is not None:
+                    mt = getattr(meas, "measure_type", None)
+                    if mt is not None:
+                        try:
+                            fd = meas.DESCRIPTOR.fields_by_name.get("measure_type")
+                            if (fd is not None) and (fd.enum_type is not None):
+                                return fd.enum_type.values_by_number[int(mt)].name
+                        except Exception:
+                            pass
+                        return str(int(mt)) if isinstance(mt, int) else str(mt)
+            except Exception:
+                pass
+
+            try:
+                ptxt = text_format.MessageToString(pair, as_one_line=False)
+                m = re.search(r"\bmeasure_type\s*:\s*([A-Z0-9_]+)", ptxt)
+                if m:
+                    return m.group(1)
+            except Exception:
+                pass
+
+            try:
+                mt = getattr(pair, "measure_type", None)
+                if mt is None:
+                    return ""
+                return str(int(mt)) if isinstance(mt, int) else str(mt)
+            except Exception:
+                return ""
+
+        def _get_pair_format_token(pair) -> str:
+            """Return enum token name for measurement.data_format."""
+            try:
+                meas = getattr(pair, "measurement", None)
+                if meas is not None:
+                    df = getattr(meas, "data_format", None)
+                    if df is not None:
+                        try:
+                            fd = meas.DESCRIPTOR.fields_by_name.get("data_format")
+                            if (fd is not None) and (fd.enum_type is not None):
+                                return fd.enum_type.values_by_number[int(df)].name
+                        except Exception:
+                            pass
+                        return str(int(df)) if isinstance(df, int) else str(df)
+            except Exception:
+                pass
+
+            try:
+                ptxt = text_format.MessageToString(pair, as_one_line=False)
+                m = re.search(r"\bdata_format\s*:\s*([A-Z0-9_]+)", ptxt)
+                if m:
+                    return m.group(1)
+            except Exception:
+                pass
+
+            try:
+                df = getattr(pair, "data_format", None)
+                if df is None:
+                    return ""
+                return str(int(df)) if isinstance(df, int) else str(df)
+            except Exception:
+                return ""
+
+        def _get_pair_data_bytes(pair) -> bytes:
+
+            # Prefer nested measurement_data.data
+            try:
+                md = getattr(pair, "measurement_data", None)
+                if md is not None:
+                    raw = getattr(md, "data", None)
+                    if raw is None:
+                        return b""
+                    # protobuf bytes fields come as 'bytes'
+                    try:
+                        return bytes(raw)
+                    except Exception:
+                        # sometimes it's a list of ints
+                        try:
+                            return bytes(bytearray(raw))
+                        except Exception:
+                            return b""
+            except Exception:
+                return b""
+
         out = []
         try:
             pairs = list(getattr(data_upload_msg, "data_pair", []))
         except Exception:
             pairs = []
+
+        # Endianness flag may exist at data_upload level
+        is_big = False
+        try:
+            is_big = bool(getattr(data_upload_msg, "is_big_endian", False))
+        except Exception:
+            is_big = False
+        endian = ">" if is_big else "<"
+
         for pair in pairs:
-            label = None
-            # First try: text_format contains "measure_type: XYZ"
+            mt_token = _get_pair_measure_type_token(pair)
+            label = self._pretty_label_from_enum_token(mt_token) if mt_token else "Value"
+
+            # Primary path: decode bytes payload
+            raw = _get_pair_data_bytes(pair)
+            fmt_token = _get_pair_format_token(pair)
+            code, bps = _data_format_to_struct_code(fmt_token)
+
+            values = []
+
+            if raw and code and bps:
+                n = len(raw) // bps
+                if n > 0:
+                    raw2 = raw[: n * bps]
+                    try:
+                        values = list(struct.unpack(endian + (code * n), raw2))
+                    except Exception:
+                        values = []
+                # else: keep empty
+
+            # Secondary path: collect scalar fields (legacy / other proto layouts)
+            if not values:
+                try:
+                    for fd, v in pair.ListFields():
+                        if fd.name in ("measure_type", "measurement_type", "type", "measurement", "measurement_data"):
+                            continue
+                        if fd.label == fd.LABEL_REPEATED:
+                            try:
+                                n = len(v)
+                            except Exception:
+                                n = 0
+                            if n == 1:
+                                values.append(v[0])
+                            elif n > 1:
+                                values.append(f"{n} values")
+                            continue
+                        if fd.cpp_type in (
+                            fd.CPPTYPE_INT32, fd.CPPTYPE_INT64, fd.CPPTYPE_UINT32, fd.CPPTYPE_UINT64,
+                            fd.CPPTYPE_FLOAT, fd.CPPTYPE_DOUBLE, fd.CPPTYPE_BOOL
+                        ):
+                            values.append(v)
+                        elif fd.cpp_type == fd.CPPTYPE_STRING:
+                            values.append(v)
+                        elif fd.cpp_type == fd.CPPTYPE_ENUM:
+                            try:
+                                values.append(fd.enum_type.values_by_number[int(v)].name)
+                            except Exception:
+                                values.append(v)
+                        else:
+                            # ignore blobs/messages here; handled above
+                            continue
+                except Exception:
+                    values = []
+
+            # Format value string (raw)
+            if isinstance(values, list) and values and all(isinstance(x, (int, float, bool)) for x in values):
+                if len(values) == 1:
+                    value_str = str(values[0])
+                else:
+                    head = ", ".join(str(x) for x in values[:6])
+                    tail = "" if len(values) <= 6 else f", … ({len(values)} samples)"
+                    value_str = head + tail
+            elif values:
+                value_str = ", ".join(str(x) for x in values)
+            else:
+                value_str = "—"
+
+            # Details (raw debug)
+            det_parts = []
+            if fmt_token:
+                det_parts.append(f"Data format: {fmt_token}")
+            # sample_time
             try:
-                ptxt = text_format.MessageToString(pair, as_one_line=False)
-                m = re.search(r"\bmeasure_type\s*:\s*([A-Z0-9_]+)", ptxt)
-                if m:
-                    label = self._pretty_label_from_enum_token(m.group(1))
+                meas = getattr(pair, "measurement", None)
+                if meas is not None and hasattr(meas, "sample_time"):
+                    det_parts.append(f"Sample time: {int(getattr(meas, 'sample_time'))}")
             except Exception:
                 pass
-
-            # Second try: direct field
-            if label is None:
+            # raw bytes preview
+            if raw:
                 try:
-                    mt = getattr(pair, "measure_type", None)
-                    if isinstance(mt, int):
-                        # Try to map through Common_pb2 enums if possible
-                        enum_name = None
-                        try:
-                            for enum_desc in getattr(Common_pb2, "DESCRIPTOR", None).enum_types:
-                                if mt in enum_desc.values_by_number:
-                                    enum_name = enum_desc.values_by_number[mt].name
-                                    break
-                        except Exception:
-                            enum_name = None
-                        label = self._pretty_label_from_enum_token(enum_name or str(mt))
-                except Exception:
-                    label = None
-
-            # Value(s): collect scalar numeric/string-ish fields excluding measure_type
-            values = []
-            try:
-                for fd, v in pair.ListFields():
-                    if fd.name in ("measure_type", "measurement_type", "type"):
-                        continue
-                    if fd.label == fd.LABEL_REPEATED:
-                        # For overall we expect singletons; if array, show count
-                        try:
-                            n = len(v)
-                        except Exception:
-                            n = 0
-                        if n == 1:
-                            values.append(str(v[0]))
-                        elif n > 1:
-                            values.append(f"{n} values")
-                        continue
-
-                    # scalar
-                    if fd.cpp_type in (fd.CPPTYPE_INT32, fd.CPPTYPE_INT64, fd.CPPTYPE_UINT32, fd.CPPTYPE_UINT64,
-                                       fd.CPPTYPE_FLOAT, fd.CPPTYPE_DOUBLE, fd.CPPTYPE_BOOL):
-                        values.append(str(v))
-                    elif fd.cpp_type == fd.CPPTYPE_STRING:
-                        values.append(str(v))
-                    elif fd.cpp_type == fd.CPPTYPE_ENUM:
-                        # show enum name if possible
-                        try:
-                            values.append(fd.enum_type.values_by_number[int(v)].name)
-                        except Exception:
-                            values.append(str(v))
-                    else:
-                        # bytes / message
-                        try:
-                            if hasattr(v, "ListFields"):
-                                values.append(self._format_nested_message(v))
-                            else:
-                                values.append(str(v))
-                        except Exception:
-                            pass
-            except Exception:
-                values = []
-
-            if not values:
-                # fallback: try to parse "value:" from text
-                try:
-                    ptxt = text_format.MessageToString(pair, as_one_line=False)
-                    m = re.search(r"\bvalue\s*:\s*([-+]?\d+(?:\.\d+)?)", ptxt)
-                    if m:
-                        values = [m.group(1)]
+                    rb = raw[:16]
+                    det_parts.append(f"Data: {repr(rb)}" + ("…" if len(raw) > 16 else ""))
                 except Exception:
                     pass
+            # CRC (not verified yet)
+            try:
+                md = getattr(pair, "measurement_data", None)
+                if md is not None and hasattr(md, "crc32_value"):
+                    det_parts.append(f"CRC: 0x{int(getattr(md, 'crc32_value')):08X} (TODO)")
+            except Exception:
+                pass
+            details = "  •  " + "   ".join(det_parts) if det_parts else ""
+            out.append({"label": label, "value": value_str, "details": details})
 
-            if label is None:
-                label = f"Metric {len(out) + 1}"
-            value_str = ", ".join(values) if values else "—"
-            out.append({"label": label, "value": value_str})
         return out
-
     def _export_waveform_capture(self, tile_id: int, payloads: list, parsed_msgs: list) -> dict:
         os.makedirs(CAPTURE_DIR, exist_ok=True)
         ts = time.strftime("%Y%m%d_%H%M%S")
@@ -782,6 +944,8 @@ class BleCycleWorker:
         def _on_device_found(device, advertisement_data):
             if not getattr(device, "address", None):
                 return
+            if self._is_cancelled(tile_id):
+                return
             if self._adv_matches(device, advertisement_data, address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains):
                 if not found_event.is_set():
                     matched_device["value"] = device
@@ -790,11 +954,23 @@ class BleCycleWorker:
         scanner = BleakScanner(_on_device_found)
         await scanner.start()
         try:
-            try:
-                await asyncio.wait_for(found_event.wait(), timeout=scan_timeout)
-            except asyncio.TimeoutError:
-                self._emit(tile_id, {"status": "Not found", "address": "—"})
-                return
+            # Wait for a matching device, but allow hard-stop cancellation.
+            start_t = asyncio.get_running_loop().time()
+            while True:
+                if self._is_cancelled(tile_id):
+                    self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (scan)", "checklist": {"waiting_connection": "pending"}})
+                    return
+                remaining = float(scan_timeout) - (asyncio.get_running_loop().time() - start_t)
+                if remaining <= 0:
+                    raise asyncio.TimeoutError()
+                try:
+                    await asyncio.wait_for(found_event.wait(), timeout=min(0.25, remaining))
+                    break
+                except asyncio.TimeoutError:
+                    continue
+        except asyncio.TimeoutError:
+            self._emit(tile_id, {"status": "Not found", "address": "—"})
+            return
         finally:
             await scanner.stop()
 
@@ -940,7 +1116,29 @@ class BleCycleWorker:
             return payload, msg, msg_type
 
         try:
+            if self._is_cancelled(tile_id):
+                # self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (before connect)"})
+                return
+            # if self._is_cancelled(tile_id):
+            #     self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (before connect)", "checklist": {"waiting_connection": "pending"}})
+            #     return
             await client.connect()
+            if self._is_cancelled(tile_id):
+                self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (connected)"})
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+                return
+
+            if self._is_cancelled(tile_id):
+                self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (connected)"})
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+                return
+
             if recorder is not None:
                 recorder.log_text(f"connected:{matched.address}")
             self._emit(tile_id, {"checklist": {"waiting_connection": "done", "connected": "done"}, "phase": "connected"})
@@ -1157,6 +1355,19 @@ class BleCycleWorker:
 
         try:
             while True:
+                if self._is_cancelled(tile_id):
+                    self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (waveform)"})
+                    return {
+                        "ok": False,
+                        "received": received,
+                        "expected": expected,
+                        "export_info": None,
+                        "last_payload": last_payload,
+                        "last_type": last_type,
+                        "last_rx_text": "",
+                        "error_info": {"where": "waveform", "type": "Cancelled", "msg": "cancel requested"},
+                    }
+
                 try:
                     data_payload, data_message, data_type = await _recv_app(wave_rx_timeout)
                 except asyncio.TimeoutError as exc:
@@ -1306,6 +1517,10 @@ class BleCycleWorker:
                 recorder.close()
             return
 
+        if self._is_cancelled(tile_id):
+            # self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (pre-connect)", "checklist": {"waiting_connection": "pending"}})
+            return
+
         self._emit(tile_id, {"status": "Connecting...", "address": matched.address, "phase": "connecting"})
         client = BleakClient(matched.address)
         rx_queue = []
@@ -1451,6 +1666,9 @@ class BleCycleWorker:
             return payload, msg, msg_type
 
         try:
+            if self._is_cancelled(tile_id):
+                self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (before connect)", "checklist": {"waiting_connection": "pending"}})
+                return
             await client.connect()
             if recorder is not None:
                 recorder.log_text(f"connected:{matched.address}")
@@ -1499,6 +1717,10 @@ class BleCycleWorker:
                                     last_loop_index = -1
                                     overall_values = None
                                     for loop_index in range(6):
+                                        if self._is_cancelled(tile_id):
+                                            self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (metrics)"})
+                                            data_collection_complete = False
+                                            break
                                         last_loop_index = loop_index
                                         latest_status = "Config hash received"
                                         if loop_index == 0:
@@ -1808,51 +2030,46 @@ class SimGwV2App:
             self._demo_clear_debug()
 
 
-    def _build_ui_demo(self, parent: tk.Frame) -> None:
-        """Demo-friendly UI: no hex dumps, just KPIs + a timeline + a short summary."""
-        panel = tk.Frame(parent, bg=self.colors["bg"])
-        panel.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
 
-        # Header
-        card = tk.Frame(panel, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+    def _ui_build_run_header_card(self, parent: tk.Widget) -> tuple:
+        """Build the standard header (used in Demo and Expert) with Start Auto / Stop and run-state labels."""
+        card = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
         card.pack(fill=tk.X, pady=(0, 12))
         inner = tk.Frame(card, bg=self.colors["panel"])
         inner.pack(fill=tk.X, padx=14, pady=12)
 
         left = tk.Frame(inner, bg=self.colors["panel"])
         left.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Label(
-            left,
-            text="SimGW Demo",
-            bg=self.colors["panel"],
-            fg=self.colors["text"],
-            font=("Segoe UI", 14, "bold"),
-        ).pack(anchor="w")
-        tk.Label(
-            left,
-            text="Scan → Connect → Overall → Waveform → Close",
-            bg=self.colors["panel"],
-            fg=self.colors["muted"],
-            font=("Segoe UI", 10),
-        ).pack(anchor="w", pady=(2, 0))
+        tk.Label(left, text="SimGW Demo", bg=self.colors["panel"], fg=self.colors["text"],
+                font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        tk.Label(left, text="Scan → Connect → Overall → Waveform → Close", bg=self.colors["panel"],
+                fg=self.colors["muted"], font=("Segoe UI", 10)).pack(anchor="w", pady=(2, 0))
 
         right = tk.Frame(inner, bg=self.colors["panel"])
         right.pack(side=tk.RIGHT)
         btns = tk.Frame(right, bg=self.colors["panel"])
         btns.pack(anchor="e")
 
-        self.demo_start_button = ttk.Button(btns, text="Start Auto", style="Accent.TButton", command=self._on_start)
-        self.demo_start_button.pack(side=tk.LEFT, padx=(0, 6))
+        start_btn = ttk.Button(btns, text="Start Auto", style="Accent.TButton", command=self._on_start)
+        start_btn.pack(side=tk.LEFT, padx=(0, 6))
+        stop_btn = ttk.Button(btns, text="Stop", command=self._stop_auto)
+        stop_btn.pack(side=tk.LEFT, padx=(0, 6))
 
-        self.demo_stop_button = ttk.Button(btns, text="Stop", command=self._stop_auto)
-        self.demo_stop_button.pack(side=tk.LEFT, padx=(0, 6))
-
-        # Run-state indicators (do not depend on sensor status text)
         run_row = tk.Frame(right, bg=self.colors["panel"])
         run_row.pack(anchor="e", pady=(6, 0))
+        tk.Label(run_row, textvariable=self.demo_auto_state_var, bg=self.colors["panel"], fg=self.colors["muted"],
+                font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(run_row, textvariable=self.demo_cycle_state_var, bg=self.colors["panel"], fg=self.colors["muted"],
+                font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
 
-        tk.Label(run_row, textvariable=self.demo_auto_state_var, bg=self.colors["panel"], fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Label(run_row, textvariable=self.demo_cycle_state_var, bg=self.colors["panel"], fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        return card, start_btn, stop_btn
+
+    def _build_ui_demo(self, parent: tk.Frame) -> None:
+        """Demo-friendly UI: no hex dumps, just KPIs + a timeline + a short summary."""
+        panel = tk.Frame(parent, bg=self.colors["bg"])
+        panel.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+        # Header
+        _card, self.demo_start_button, self.demo_stop_button = self._ui_build_run_header_card(panel)
 
         # Ensure buttons reflect current state
         self._update_demo_run_controls()
@@ -1979,9 +2196,14 @@ class SimGwV2App:
             ax.set_xlabel("Sample")
             ax.set_ylabel("Value")
             ax.grid(True, alpha=0.2)
+            self._demo_style_plot_axes(ax)
 
             self.demo_plot_canvas = FigureCanvasTkAgg(self.demo_plot_fig, master=plot_area)
             self.demo_plot_widget = self.demo_plot_canvas.get_tk_widget()
+            try:
+                self.demo_plot_widget.configure(bg=self.colors.get("panel", "#171a21"))
+            except Exception:
+                pass
             self.demo_plot_widget.pack(fill=tk.BOTH, expand=True)
 
         # Add panes with initial proportions (user can resize with the sash)
@@ -2011,6 +2233,36 @@ class SimGwV2App:
         )
         self.demo_debug.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         self.demo_debug.configure(state=tk.DISABLED)
+
+
+    def _demo_style_plot_axes(self, ax) -> None:
+        """Apply dark-theme styling to the embedded matplotlib axes."""
+        try:
+            fc = self.colors.get("panel", "#171a21")
+            tc = self.colors.get("text", "#e6e6e6")
+            mc = self.colors.get("muted", "#8b93a1")
+            bc = self.colors.get("border", "#2a2f3a")
+
+            # Figure + axes background
+            if getattr(self, "demo_plot_fig", None) is not None:
+                self.demo_plot_fig.patch.set_facecolor(fc)
+            ax.set_facecolor(fc)
+
+            # Titles / labels / ticks
+            ax.title.set_color(tc)
+            ax.xaxis.label.set_color(mc)
+            ax.yaxis.label.set_color(mc)
+            ax.tick_params(colors=mc)
+
+            # Spines + grid
+            for sp in ax.spines.values():
+                sp.set_color(bc)
+            try:
+                ax.grid(True, alpha=0.25, color=bc)
+            except Exception:
+                ax.grid(True, alpha=0.25)
+        except Exception:
+            pass
 
     def _demo_plot_waveform_from_samples(self, samples_csv_path: str) -> None:
         """Load the exported *_samples.csv and render it in the embedded Demo plot."""
@@ -2069,6 +2321,7 @@ class SimGwV2App:
             ax.set_xlabel("Sample")
             ax.set_ylabel("Value")
             ax.grid(True, alpha=0.2)
+            self._demo_style_plot_axes(ax)
             self.demo_plot_canvas.draw()
         except Exception:
             pass
@@ -2107,6 +2360,7 @@ class SimGwV2App:
         ax.set_xlabel("Sample")
         ax.set_ylabel("Amplitude (int16)")
         ax.grid(True, alpha=0.2)
+        self._demo_style_plot_axes(ax)
         self.demo_plot_canvas.draw()
 
 
@@ -2520,6 +2774,9 @@ class SimGwV2App:
                 # Keep it compact: avoid multi-line values in the list view
                 val = " ".join(val.split())
                 lines.append(f"{lbl:<28} {val}")
+                det = str(it.get("details", "") or "").rstrip()
+                if det:
+                    lines.append(det)
         else:
             # Fallback: show only message type if available (kept minimal)
             msg_type = ""
@@ -2603,30 +2860,17 @@ class SimGwV2App:
         self.demo_summary.configure(state=tk.DISABLED)
 
     def _build_ui_expert(self) -> None:
-        header = tk.Frame(self.root, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-        header.pack(fill=tk.X, padx=16, pady=(16, 10))
 
-        left = tk.Frame(header, bg=self.colors["panel"])
-        left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=12, pady=12)
-        
-        tk.Label(left, text="SimGW v2 BLE Loop", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 14, "bold")).pack(anchor="w")
-        tk.Label(left, text="Auto-connect / send / receive / disconnect", bg=self.colors["panel"], fg=self.colors["muted"]).pack(anchor="w", pady=(2, 0))
+        # Header (same layout as Demo)
+        _card, self.start_button, self.stop_auto_button = self._ui_build_run_header_card(self.root)
+        self._update_demo_run_controls()
 
-        controls = tk.Frame(header, bg=self.colors["panel"])
-        controls.pack(side=tk.RIGHT, padx=12, pady=12)
+        # Options
+        opt_row = tk.Frame(self.root, bg=self.colors["bg"])
+        opt_row.pack(fill=tk.X, padx=16, pady=(0, 6))
+        self.record_sessions_check = ttk.Checkbutton(opt_row, text="Record sessions", variable=self.record_sessions_var)
+        self.record_sessions_check.pack(side=tk.LEFT)
 
-        self.start_button = ttk.Button(controls, text="Start", style="Accent.TButton", command=self._on_start)
-        self.start_button.pack(side=tk.TOP, pady=(0, 6))
-        self.stop_auto_button = ttk.Button(controls, text="Stop Auto", command=self._stop_auto)
-        self.stop_auto_button.pack(side=tk.TOP, pady=(0, 6))
-        self.clear_logs_button = ttk.Button(controls, text="Clear Logs", command=self._clear_tiles)
-        self.clear_logs_button.pack(side=tk.TOP)
-
-        self.dump_adv_button = ttk.Button(controls, text="Dump ADV", command=self._on_dump_adv)
-        self.dump_adv_button.pack(side=tk.TOP, pady=(6, 0))
-
-        self.record_sessions_check = ttk.Checkbutton(controls, text="Record sessions", variable=self.record_sessions_var)
-        self.record_sessions_check.pack(side=tk.TOP, pady=(8, 0))
 
         form = tk.Frame(self.root, bg=self.colors["bg"])
         form.pack(fill=tk.X, padx=16)
@@ -2647,7 +2891,8 @@ class SimGwV2App:
         tk.Label(manual, text="Manual commands:", bg=self.colors["bg"], fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 8))
         for text_, action_ in MANUAL_ACTIONS:
             ttk.Button(manual, text=text_, command=lambda a=action_: self._start_manual_action(a)).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(manual, text="Plot Latest", command=self._plot_latest_waveform).pack(side=tk.LEFT, padx=(12, 6))
+        ttk.Button(manual, text="Clear logs", command=self._clear_tiles).pack(side=tk.LEFT, padx=(12, 6))
+        ttk.Button(manual, text="Plot Latest", command=self._plot_latest_waveform).pack(side=tk.LEFT, padx=(0, 6))
 
         tiles_frame = tk.Frame(self.root, bg=self.colors["bg"])
         tiles_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(12, 16))
@@ -2794,6 +3039,11 @@ class SimGwV2App:
 
     def _on_start(self) -> None:
         self._reset_auto_state()
+        # Clear any previous hard-stop request
+        try:
+            self.worker.clear_cancel_all()
+        except Exception:
+            pass
         self.auto_run = True
         self._update_demo_run_controls()
         self._start_cycle(expected_generation=self._auto_generation)
@@ -2819,6 +3069,11 @@ class SimGwV2App:
 
     def _stop_auto(self) -> None:
         self._reset_auto_state()
+        # Hard-stop: cancel any in-flight scan/connect/download
+        try:
+            self.worker.request_cancel_all()
+        except Exception:
+            pass
         try:
             self.demo_status_var.set("Idle")
         except Exception:
@@ -2829,6 +3084,50 @@ class SimGwV2App:
         def _cb() -> None:
             self._start_cycle(expected_generation=generation)
         self.root.after(AUTO_RESTART_DELAY_MS, _cb)
+
+    
+    def _format_overalls_compact(self, overall_values: Optional[list], max_lines: int = 6) -> str:
+        """Return a compact multi-line string for overall values (raw)."""
+        if not overall_values:
+            return "(no overalls)"
+        rows = []
+        try:
+            for it in overall_values:
+                lbl = str((it or {}).get("label", "") or "Metric")
+                val = str((it or {}).get("value", "") or "—")
+                rows.append((lbl, val))
+        except Exception:
+            return "(overalls parse error)"
+        # stable sort by label for readability
+        rows.sort(key=lambda x: x[0].lower())
+        if max_lines > 0 and len(rows) > max_lines:
+            shown = rows[:max_lines]
+            more = len(rows) - max_lines
+        else:
+            shown = rows
+            more = 0
+        w = max((len(a) for a, _b in shown), default=0)
+        w = min(max(w, 10), 28)
+        lines = [f"{a[:w]:<{w}}  {b}" for a, b in shown]
+        if more:
+            lines.append(f"(+{more} more)")
+        return "\n".join(lines)
+
+    def _format_export_compact(self, export_info: Optional[dict]) -> str:
+        """Return a compact export summary for Expert tiles."""
+        if not export_info:
+            return "Export: —"
+        raw = export_info.get("raw") if isinstance(export_info, dict) else None
+        idx = export_info.get("index") if isinstance(export_info, dict) else None
+        cnt = export_info.get("count") if isinstance(export_info, dict) else None
+        parts = []
+        if raw:
+            parts.append(f"- raw: {raw}")
+        if idx:
+            parts.append(f"- index: {idx}")
+        if cnt not in (None, ""):
+            parts.append(f"- blocks: {cnt}")
+        return "Export:\n" + ("\n".join(parts) if parts else "—")
 
     def _create_tile(self, tile_id: int) -> None:
         card = tk.Frame(
@@ -2869,8 +3168,16 @@ class SimGwV2App:
             checklist_labels[key] = label
             checklist_titles[key] = title
 
-        rx_label = tk.Label(body, text="RX: —", bg=self.colors["panel"], fg=self.colors["text"], wraplength=720, justify="left")
-        rx_label.pack(anchor="w", pady=(4, 0))
+
+        # Compact summary (similar to Demo)
+        overall_label = tk.Label(body, text="Overalls: —", bg=self.colors["panel"], fg=self.colors["text"], justify="left", font=("Consolas", 9))
+        overall_label.pack(anchor="w", pady=(6, 0))
+
+        waveform_label = tk.Label(body, text="Waveform: —", bg=self.colors["panel"], fg=self.colors["muted"], justify="left")
+        waveform_label.pack(anchor="w", pady=(4, 0))
+
+        export_label = tk.Label(body, text="Export: —", bg=self.colors["panel"], fg=self.colors["muted"], justify="left", wraplength=720)
+        export_label.pack(anchor="w", pady=(4, 0))
 
         plot_btn = ttk.Button(body, text="Plot export", command=lambda tid=tile_id: self._plot_tile_waveform(tid))
         plot_btn.pack(anchor="w", pady=(6, 0))
@@ -2880,7 +3187,9 @@ class SimGwV2App:
             "status": status_label,
             "address": address_label,
             "session": session_label,
-            "rx": rx_label,
+            "overall": overall_label,
+            "waveform": waveform_label,
+            "export": export_label,
             "checklist": checklist_labels,
             "checklist_titles": checklist_titles,
             "plot_btn": plot_btn,
@@ -3087,8 +3396,25 @@ class SimGwV2App:
             tile["address"].configure(text=f"Address: {payload['address']}")
         if "session_dir" in payload:
             tile["session"].configure(text=f"Session: {payload['session_dir']}")
-        if "rx_text" in payload:
-            tile["rx"].configure(text=f"RX: {payload['rx_text']}")
+
+        # Always refresh compact summary when new data arrives
+        try:
+            ov_txt = self._format_overalls_compact(st.overall_values, max_lines=8)
+            tile["overall"].configure(text=ov_txt)
+        except Exception:
+            pass
+        try:
+            # waveform KPI: show whether export is present
+            if st.export_info and (st.export_info.get("raw") or st.export_info.get("index")):
+                tile["waveform"].configure(text="Waveform: OK")
+            else:
+                tile["waveform"].configure(text="Waveform: —")
+        except Exception:
+            pass
+        try:
+            tile["export"].configure(text=self._format_export_compact(st.export_info))
+        except Exception:
+            pass
 
         if "checklist" in payload:
             labels = tile.get("checklist", {})
