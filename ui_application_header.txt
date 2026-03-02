@@ -1,0 +1,43 @@
+﻿"""
+UI Application module for simGW - Tkinter GUI components.
+
+Contains the main SimGwV2App class with:
+- 4-tab interface (Demo/Expert/Devices/Settings)
+- BLE device management
+- Waveform plotting
+- Session management
+"""
+import asyncio
+import csv
+import os
+import re
+import threading
+import time
+import tkinter as tk
+from queue import Queue, Empty
+from tkinter import ttk, messagebox
+from typing import Dict, Optional
+
+try:
+    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
+    try:
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    except Exception:
+        FigureCanvasTkAgg = None
+except Exception:
+    plt = None
+    Figure = None
+    FigureCanvasTkAgg = None
+
+# Import shared modules
+from config import (
+    AUTO_RESTART_DELAY_MS, UI_POLL_INTERVAL_MS,
+    CHECKLIST_ITEMS, CHECKLIST_STATE_MAP, MANUAL_ACTIONS
+)
+from data_exporters import WaveformParser
+
+# Import core classes that SimGwV2App depends on
+# These will be imported in simGw_v9_Temp.py and passed/accessed as needed
+# BleCycleWorker and TileState are needed
+

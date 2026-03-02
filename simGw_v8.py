@@ -2865,34 +2865,56 @@ class SimGwV2App:
         _card, self.start_button, self.stop_auto_button = self._ui_build_run_header_card(self.root)
         self._update_demo_run_controls()
 
-        # Options
-        opt_row = tk.Frame(self.root, bg=self.colors["bg"])
-        opt_row.pack(fill=tk.X, padx=16, pady=(0, 6))
-        self.record_sessions_check = ttk.Checkbutton(opt_row, text="Record sessions", variable=self.record_sessions_var)
-        self.record_sessions_check.pack(side=tk.LEFT)
+        # Filters (keep only the essentials here; other runtime settings live in the Settings tab)
+        filter_box = tk.Frame(self.root, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+        filter_box.pack(fill=tk.X, padx=16, pady=(0, 8))
+        filter_in = tk.Frame(filter_box, bg=self.colors["panel"])
+        filter_in.pack(fill=tk.X, padx=14, pady=10)
 
+        tk.Label(
+            filter_in,
+            text="Filters",
+            bg=self.colors["panel"],
+            fg=self.colors["muted"],
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w")
 
-        form = tk.Frame(self.root, bg=self.colors["bg"])
-        form.pack(fill=tk.X, padx=16)
+        form = tk.Frame(filter_in, bg=self.colors["panel"])
+        form.pack(fill=tk.X, pady=(6, 0))
 
-        self._build_field(form, "Address prefix", self.address_prefix_var)
         # Optional advertising filters (leave empty to disable)
+        self._build_field(form, "Address prefix", self.address_prefix_var)
         self._build_field(form, "ADV name contains", self.adv_name_contains_var)
-        self._build_field(form, "ADV service UUID contains", self.adv_service_uuid_contains_var)
-        self._build_field(form, "ADV mfg id (hex)", self.adv_mfg_id_hex_var, width=10)
-        self._build_field(form, "ADV mfg data contains (hex)", self.adv_mfg_data_hex_contains_var)
-        self._build_field(form, "MTU", self.mtu_var, width=8)
-        self._build_field(form, "Scan timeout (s)", self.scan_timeout_var, width=8)
-        self._build_field(form, "RX timeout (s)", self.rx_timeout_var, width=8)
-        self._build_field(form, "Session dir", self.session_root_var, width=18)
 
         manual = tk.Frame(self.root, bg=self.colors["bg"])
         manual.pack(fill=tk.X, padx=16, pady=(8, 0))
-        tk.Label(manual, text="Manual commands:", bg=self.colors["bg"], fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 8))
+
+        tk.Label(
+            manual,
+            text="Manual commands:",
+            bg=self.colors["bg"],
+            fg=self.colors["muted"],
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", pady=(0, 6))
+
+        manual_btns = tk.Frame(manual, bg=self.colors["bg"])
+        manual_btns.pack(fill=tk.X)
+
+        # Line 1: main manual actions (wrap responsive)
+        buttons = []
         for text_, action_ in MANUAL_ACTIONS:
-            ttk.Button(manual, text=text_, command=lambda a=action_: self._start_manual_action(a)).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(manual, text="Clear logs", command=self._clear_tiles).pack(side=tk.LEFT, padx=(12, 6))
-        ttk.Button(manual, text="Plot Latest", command=self._plot_latest_waveform).pack(side=tk.LEFT, padx=(0, 6))
+            buttons.append(ttk.Button(manual_btns, text=text_, command=lambda a=action_: self._start_manual_action(a)))
+        self._wrap_buttons(manual_btns, buttons)
+
+        # Line 2: utilities (separate row)
+        util = tk.Frame(manual, bg=self.colors["bg"])
+        util.pack(fill=tk.X, pady=(8, 0))
+
+        util_btns = [
+            ttk.Button(util, text="Clear logs", command=self._clear_tiles),
+            ttk.Button(util, text="Plot Latest", command=self._plot_latest_waveform),
+        ]
+        self._wrap_buttons(util, util_btns, min_btn_px=160)
 
         tiles_frame = tk.Frame(self.root, bg=self.colors["bg"])
         tiles_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(12, 16))
@@ -2914,10 +2936,43 @@ class SimGwV2App:
         self.canvas.bind_all("<MouseWheel>", self._on_mouse_wheel)
         self.canvas.bind_all("<Shift-MouseWheel>", self._on_mouse_wheel)
 
+    def _wrap_buttons(self, container: tk.Frame, buttons: list, min_btn_px: int = 140) -> None:
+        """Lay out a list of ttk.Button into a responsive grid that wraps with window width."""
+        state = {"cols": 0}
+
+        def _relayout(_evt=None) -> None:
+            try:
+                w = int(container.winfo_width())
+            except Exception:
+                w = 0
+            cols = max(1, w // max(1, int(min_btn_px)))
+            if cols == state["cols"]:
+                return
+            state["cols"] = cols
+
+            for child in container.winfo_children():
+                child.grid_forget()
+
+            for i, btn in enumerate(buttons):
+                r = i // cols
+                c = i % cols
+                btn.grid(row=r, column=c, padx=(0, 8), pady=(0, 8), sticky="w")
+
+            for c in range(cols):
+                try:
+                    container.grid_columnconfigure(c, weight=1)
+                except Exception:
+                    pass
+
+        container.bind("<Configure>", _relayout)
+        # First layout after Tk has computed sizes
+        self.root.after(0, _relayout)
+
     def _build_field(self, parent: tk.Frame, label: str, variable: tk.StringVar, width: int = 16) -> None:
-        row = tk.Frame(parent, bg=self.colors["bg"])
+        parent_bg = parent.cget("bg") if hasattr(parent, "cget") else self.colors["bg"]
+        row = tk.Frame(parent, bg=parent_bg)
         row.pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(row, text=label, bg=self.colors["bg"], fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        tk.Label(row, text=label, bg=parent_bg, fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
         entry = ttk.Entry(row, textvariable=variable, width=width)
         entry.pack(anchor="w")
 
