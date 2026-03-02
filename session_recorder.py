@@ -1,23 +1,16 @@
 """
 Session recording module for BLE communication logging.
 
-Creates per-session log folders with:
-- events.csv: timestamp, direction, kind, msg_type, length, hex_short
-- events.txt: human-readable lines
-- rx_tx.bin: raw frames (dir byte + uint32_le length + payload)
+Creates per-session log folder with:
+- events.txt: human-readable lines with FULL hex data (no truncation)
 """
-import csv
 import os
-import struct
 import time
 
 
 class SessionRecorder:
     """
-    Writes a per-session log folder with:
-    - events.csv: timestamp, direction, kind, msg_type, length, hex_short
-    - events.txt: human-readable lines
-    - rx_tx.bin: raw frames (dir byte + uint32_le length + payload)
+    Writes a per-session log folder with events.txt containing full message data.
     """
     def __init__(self, root_dir: str, session_name: str):
         self.root_dir = root_dir
@@ -25,53 +18,55 @@ class SessionRecorder:
         self.session_dir = os.path.join(root_dir, session_name)
         os.makedirs(self.session_dir, exist_ok=True)
 
-        self.csv_path = os.path.join(self.session_dir, "events.csv")
         self.txt_path = os.path.join(self.session_dir, "events.txt")
-        self.bin_path = os.path.join(self.session_dir, "rx_tx.bin")
-
-        self._csv_f = open(self.csv_path, "w", newline="", encoding="utf-8")
-        self._csv = csv.writer(self._csv_f)
-        self._csv.writerow(["ts_ms", "dir", "kind", "msg_type", "len", "hex_short"])
-
         self._txt_f = open(self.txt_path, "w", encoding="utf-8")
-        self._bin_f = open(self.bin_path, "wb")
+        
+        # Write header
+        self._txt_f.write("=" * 80 + "\n")
+        self._txt_f.write(f"SESSION: {session_name}\n")
+        self._txt_f.write(f"STARTED: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        self._txt_f.write("=" * 80 + "\n\n")
+        self._txt_f.flush()
 
     def close(self):
-        """Close all open file handles."""
-        for f in (getattr(self, "_csv_f", None), getattr(self, "_txt_f", None), getattr(self, "_bin_f", None)):
-            try:
-                if f is not None:
-                    f.close()
-            except Exception:
-                pass
+        """Close text file handle."""
+        try:
+            if hasattr(self, "_txt_f") and self._txt_f is not None:
+                self._txt_f.write("\n" + "=" * 80 + "\n")
+                self._txt_f.write(f"SESSION ENDED: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                self._txt_f.write("=" * 80 + "\n")
+                self._txt_f.close()
+        except Exception:
+            pass
 
     def log(self, direction: str, kind: str, msg_type: str, payload: bytes):
         """
-        Log a BLE message to all output files.
+        Log a BLE message to text file with FULL hex data.
         
         Args:
             direction: "RX", "TX", or "EVT"
             kind: Message kind/category
             msg_type: Protobuf message type
-            payload: Raw message bytes
+            payload: Raw message bytes (ALL bytes, no truncation)
         """
         ts_ms = int(time.time() * 1000)
-        hex_short = " ".join(f"{b:02X}" for b in payload[:24])
-        if len(payload) > 24:
-            hex_short += " …"
-
-        self._csv.writerow([ts_ms, direction, kind, msg_type, len(payload), hex_short])
-        self._csv_f.flush()
-
-        self._txt_f.write(f"{ts_ms} {direction} {kind} {msg_type} len={len(payload)} hex={hex_short}\n")
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Format hex data in readable lines (32 bytes per line for readability)
+        hex_lines = []
+        for i in range(0, len(payload), 32):
+            chunk = payload[i:i+32]
+            hex_str = " ".join(f"{b:02X}" for b in chunk)
+            hex_lines.append(f"  {hex_str}")
+        
+        hex_full = "\n".join(hex_lines) if hex_lines else "  (empty)"
+        
+        # Write formatted entry
+        self._txt_f.write(f"[{timestamp}] {direction} | {kind} | {msg_type}\n")
+        self._txt_f.write(f"  Length: {len(payload)} bytes\n")
+        self._txt_f.write(f"  Hex data:\n{hex_full}\n")
+        self._txt_f.write("-" * 80 + "\n")
         self._txt_f.flush()
-
-        # dir byte: 0=RX, 1=TX, 2=EVT
-        dir_b = 0 if direction == "RX" else (1 if direction == "TX" else 2)
-        self._bin_f.write(bytes([dir_b]))
-        self._bin_f.write(struct.pack("<I", len(payload)))
-        self._bin_f.write(payload)
-        self._bin_f.flush()
 
     def log_text(self, text: str):
         """
@@ -80,6 +75,7 @@ class SessionRecorder:
         Args:
             text: Event description
         """
-        ts_ms = int(time.time() * 1000)
-        self._txt_f.write(f"{ts_ms} EVT {text}\n")
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        self._txt_f.write(f"[{timestamp}] EVENT | {text}\n")
+        self._txt_f.write("-" * 80 + "\n")
         self._txt_f.flush()

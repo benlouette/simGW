@@ -3,7 +3,6 @@ Data Exporters - Centralized export logic for waveforms and sessions
 Extracts ~150 lines from BleCycleWorker
 """
 
-import csv
 import os
 import struct
 import time
@@ -14,7 +13,7 @@ CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
 
 
 class WaveformExporter:
-    """Handles waveform capture exports to CSV and binary formats."""
+    """Handles waveform capture exports to binary format (protobuf payloads)."""
     
     def __init__(self, capture_dir: str = CAPTURE_DIR):
         """
@@ -27,98 +26,32 @@ class WaveformExporter:
     def export_waveform_capture(self, tile_id: int, payloads: list, parsed_msgs: list, 
                                formatter_func=None) -> Dict[str, str]:
         """
-        Export waveform capture to files.
+        Export waveform capture to binary file only.
         
         Args:
             tile_id: Tile identifier
             payloads: List of raw protobuf payloads
-            parsed_msgs: List of parsed AppMessage objects
-            formatter_func: Optional function to format hex preview
+            parsed_msgs: List of parsed AppMessage objects (unused now, kept for compatibility)
+            formatter_func: Optional function (unused now, kept for compatibility)
         
         Returns:
-            dict: Export info with paths and count
+            dict: Export info with raw path and count
         """
         ts = time.strftime("%Y%m%d_%H%M%S")
         base = os.path.join(self.capture_dir, f"waveform_tile{tile_id}_{ts}")
         
         raw_path = base + ".bin"
-        idx_path = base + "_index.csv"
-        samples_path = base + "_samples.csv"
         
-        # Write raw binary
+        # Write raw binary (4-byte length prefix + payload for each message)
         with open(raw_path, "wb") as f:
             for payload in payloads:
                 f.write(len(payload).to_bytes(4, "little"))
                 f.write(payload)
         
-        # Write index CSV
-        sample_rows = []
-        with open(idx_path, "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow(["block_index", "payload_len", "msg_type", "total_block", "msg_seq_no", "hex_preview"])
-            
-            for i, (payload, msg) in enumerate(zip(payloads, parsed_msgs), start=1):
-                msg_type = msg.WhichOneof("_messages") or "(none)"
-                total_block = ""
-                msg_seq_no = ""
-                
-                try:
-                    total_block = getattr(msg.data_upload.header, "total_block", "")
-                    msg_seq_no = getattr(msg.data_upload.header, "message_seq_no", "")
-                except Exception:
-                    pass
-                
-                hex_preview = self._hex_short(payload, 32) if formatter_func is None else formatter_func(payload, 32)
-                w.writerow([i, len(payload), msg_type, total_block, msg_seq_no, hex_preview])
-                
-                if msg_type == "data_upload":
-                    sample_rows.extend((i,) + r for r in self._extract_waveform_samples(msg))
-        
-        # Write samples CSV if available
-        if sample_rows:
-            with open(samples_path, "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow(["block_index", "pair_index", "field_name", "sample_index", "value"])
-                w.writerows(sample_rows)
-        else:
-            samples_path = ""
-        
         return {
             "raw": raw_path,
-            "index": idx_path,
-            "samples": samples_path,
             "count": len(payloads)
         }
-    
-    @staticmethod
-    def _hex_short(payload: bytes, max_len: int = 48) -> str:
-        """Truncated hex representation."""
-        if payload is None:
-            return ""
-        if len(payload) <= max_len:
-            return payload.hex(" ")
-        return payload[:max_len].hex(" ") + f" ... ({len(payload)} bytes)"
-    
-    @staticmethod
-    def _extract_waveform_samples(app_msg) -> list:
-        """Extract waveform samples from data_upload message."""
-        rows = []
-        try:
-            for pair_idx, pair in enumerate(getattr(app_msg.data_upload, "data_pair", [])):
-                for field_desc, value in pair.ListFields():
-                    if field_desc.label != field_desc.LABEL_REPEATED:
-                        continue
-                    if field_desc.cpp_type not in (
-                        field_desc.CPPTYPE_INT32, field_desc.CPPTYPE_INT64,
-                        field_desc.CPPTYPE_UINT32, field_desc.CPPTYPE_UINT64,
-                        field_desc.CPPTYPE_FLOAT, field_desc.CPPTYPE_DOUBLE,
-                    ):
-                        continue
-                    for sample_idx, sample in enumerate(value):
-                        rows.append((pair_idx, field_desc.name, sample_idx, sample))
-        except Exception:
-            return []
-        return rows
 
 
 class WaveformParser:

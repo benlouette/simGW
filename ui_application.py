@@ -7,7 +7,6 @@ Contains the main SimGwV2App class with:
 - Waveform plotting
 """
 import asyncio
-import csv
 import os
 import re
 import threading
@@ -42,7 +41,7 @@ def create_app_class(BleCycleWorker, TileState):
             self.root = root
             self._tk_root = root
             self.root.title("SimGW v2 BLE Loop")
-            self.root.geometry("860x620")
+            self.root.geometry("1000x800")
             self.root.configure(bg="#0f1115")
     
             self.ui_queue: Queue = Queue()
@@ -254,7 +253,7 @@ def create_app_class(BleCycleWorker, TileState):
         def _ui_build_run_header_card(self, parent: tk.Widget) -> tuple:
             """Build the standard header (used in Demo and Expert) with Start Auto / Stop and run-state labels."""
             card = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            card.pack(fill=tk.X, pady=(0, 12))
+            card.pack(fill=tk.X, padx=16, pady=(16, 12))
             inner = tk.Frame(card, bg=self.colors["panel"])
             inner.pack(fill=tk.X, padx=14, pady=12)
     
@@ -481,68 +480,6 @@ def create_app_class(BleCycleWorker, TileState):
                     ax.grid(True, alpha=0.25, color=bc)
                 except Exception:
                     ax.grid(True, alpha=0.25)
-            except Exception:
-                pass
-    
-        def _demo_plot_waveform_from_samples(self, samples_csv_path: str) -> None:
-            """Load the exported *_samples.csv and render it in the embedded Demo plot."""
-            if not samples_csv_path:
-                return
-            if self.demo_plot_canvas is None or self.demo_plot_fig is None:
-                return
-            if not os.path.isfile(samples_csv_path):
-                return
-    
-            # Read rows and pick the longest series (field_name) to plot
-            series = {}  # field_name -> list of (global_index, value)
-            try:
-                with open(samples_csv_path, "r", encoding="utf-8") as f:
-                    r = csv.DictReader(f)
-                    for row in r:
-                        try:
-                            field = (row.get("field_name") or "").strip()
-                            block_i = int(row.get("block_index") or 0)
-                            sample_i = int(row.get("sample_index") or 0)
-                            val = float(row.get("value") or 0)
-                        except Exception:
-                            continue
-                        # Create a monotonically increasing index across blocks
-                        global_i = (block_i - 1) * 10_000_000 + sample_i
-                        if field not in series:
-                            series[field] = []
-                        series[field].append((global_i, val))
-            except Exception:
-                return
-    
-            if not series:
-                return
-    
-            # Choose the field with most samples
-            field = max(series.keys(), key=lambda k: len(series.get(k) or []))
-            try:
-                if self.demo_plot_label is not None:
-                    self.demo_plot_label.configure(text=f"{len(series[field])} points")
-            except Exception:
-                pass
-            pts = series[field]
-            pts.sort(key=lambda x: x[0])
-            # Normalize index to 0..N-1 for display
-            y = [v for _, v in pts]
-            x = list(range(len(y)))
-    
-            try:
-                ax = self.demo_plot_fig.axes[0] if self.demo_plot_fig.axes else self.demo_plot_fig.add_subplot(111)
-                ax.clear()
-                ax.plot(x, y)
-                title = "Waveform (latest)"
-                if field:
-                    title = f"Waveform (latest) • {field}"
-                ax.set_title(title)
-                ax.set_xlabel("Sample")
-                ax.set_ylabel("Value")
-                ax.grid(True, alpha=0.2)
-                self._demo_style_plot_axes(ax)
-                self.demo_plot_canvas.draw()
             except Exception:
                 pass
     
@@ -1286,50 +1223,64 @@ def create_app_class(BleCycleWorker, TileState):
             filter_in = tk.Frame(filter_box, bg=self.colors["panel"])
             filter_in.pack(fill=tk.X, padx=14, pady=10)
     
+            # Filters title aligned with fields
+            title_row = tk.Frame(filter_in, bg=self.colors["panel"])
+            title_row.pack(fill=tk.X, pady=(0, 6))
             tk.Label(
-                filter_in,
-                text="Filters",
+                title_row,
+                text="🔍 Filters",
                 bg=self.colors["panel"],
-                fg=self.colors["muted"],
-                font=("Segoe UI", 9, "bold"),
-            ).pack(anchor="w")
+                fg=self.colors["text"],
+                font=("Segoe UI", 10, "bold"),
+            ).pack(side=tk.LEFT)
     
             form = tk.Frame(filter_in, bg=self.colors["panel"])
-            form.pack(fill=tk.X, pady=(6, 0))
+            form.pack(fill=tk.X)
     
             # Optional advertising filters (leave empty to disable)
             self._build_field(form, "Address prefix", self.address_prefix_var)
             self._build_field(form, "ADV name contains", self.adv_name_contains_var)
     
-            manual = tk.Frame(self.root, bg=self.colors["bg"])
-            manual.pack(fill=tk.X, padx=16, pady=(8, 0))
+            # Manual Commands with border
+            manual_card = tk.Frame(self.root, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+            manual_card.pack(fill=tk.X, padx=16, pady=(0, 12))
+            manual = tk.Frame(manual_card, bg=self.colors["panel"])
+            manual.pack(fill=tk.X, padx=14, pady=10)
     
+            # Title
+            title_row = tk.Frame(manual, bg=self.colors["panel"])
+            title_row.pack(fill=tk.X, pady=(0, 8))
             tk.Label(
-                manual,
-                text="Manual commands:",
-                bg=self.colors["bg"],
-                fg=self.colors["muted"],
-                font=("Segoe UI", 9, "bold"),
-            ).pack(anchor="w", pady=(0, 6))
+                title_row,
+                text="⚡ Manual Commands",
+                bg=self.colors["panel"],
+                fg=self.colors["text"],
+                font=("Segoe UI", 10, "bold"),
+            ).pack(side=tk.LEFT)
     
-            manual_btns = tk.Frame(manual, bg=self.colors["bg"])
-            manual_btns.pack(fill=tk.X)
+            # Main actions grid
+            manual_btns = tk.Frame(manual, bg=self.colors["panel"])
+            manual_btns.pack(fill=tk.X, pady=(0, 8))
     
-            # Line 1: main manual actions (wrap responsive)
             buttons = []
             for text_, action_ in MANUAL_ACTIONS:
-                buttons.append(ttk.Button(manual_btns, text=text_, command=lambda a=action_: self._start_manual_action(a)))
-            self._wrap_buttons(manual_btns, buttons)
+                btn = ttk.Button(manual_btns, text=text_, width=20, command=lambda a=action_: self._start_manual_action(a))
+                buttons.append(btn)
+            self._wrap_buttons(manual_btns, buttons, min_btn_px=180)
     
-            # Line 2: utilities (separate row)
-            util = tk.Frame(manual, bg=self.colors["bg"])
-            util.pack(fill=tk.X, pady=(8, 0))
+            # Utilities separator
+            sep = tk.Frame(manual, bg=self.colors["border"], height=1)
+            sep.pack(fill=tk.X, pady=(0, 8))
+    
+            # Utilities row
+            util = tk.Frame(manual, bg=self.colors["panel"])
+            util.pack(fill=tk.X)
     
             util_btns = [
-                ttk.Button(util, text="Clear logs", command=self._clear_tiles),
-                ttk.Button(util, text="Plot Latest", command=self._plot_latest_waveform),
+                ttk.Button(util, text="Clear logs", width=20, command=self._clear_tiles),
+                ttk.Button(util, text="Plot Latest", width=20, command=self._plot_latest_waveform),
             ]
-            self._wrap_buttons(util, util_btns, min_btn_px=160)
+            self._wrap_buttons(util, util_btns, min_btn_px=180)
     
             tiles_frame = tk.Frame(self.root, bg=self.colors["bg"])
             tiles_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(12, 16))
@@ -1688,101 +1639,40 @@ def create_app_class(BleCycleWorker, TileState):
     
     
         def _plot_waveform_from_export(self, export_info: dict, title: str = "Waveform") -> None:
+            """Plot waveform from export info (uses .bin file only)."""
             if plt is None:
                 messagebox.showerror("Waveform plot", "matplotlib is not installed.\nInstall with: pip install matplotlib")
                 return
+            
             raw_path = export_info.get("raw") if isinstance(export_info, dict) else None
-            samples_path = export_info.get("samples") if isinstance(export_info, dict) else None
-            index_path = export_info.get("index") if isinstance(export_info, dict) else None
+            
             try:
-                # Preferred path: reconstruct true time waveform from raw protobuf payloads export
-                if raw_path and os.path.exists(raw_path):
-                    y, meta = WaveformExportTools.extract_true_waveform_samples(raw_path)
-                    fs = float(meta.get("fs_hz", 0.0) or 0.0)
-                    x = list(range(len(y)))
-                    xlabel = "Sample index"
-                    if fs > 0.0:
-                        x = [i / fs for i in range(len(y))]
-                        xlabel = f"Time (s) @ Fs={fs:g} Hz"
-                    plt.figure()
-                    plt.plot(x, y)
-                    plt.title(f"{title} (reconstructed TWF, {meta.get('samples', len(y))} samples)")
-                    plt.xlabel(xlabel)
-                    plt.ylabel("Acceleration (raw int16)")
-                    plt.grid(True)
-                    plt.show()
-                    return
-    
-                # Fallback 1: generic samples.csv plot (debug)
-                if samples_path and os.path.exists(samples_path):
-                    with open(samples_path, "r", newline="", encoding="utf-8") as f:
-                        r = csv.DictReader(f)
-                        rows = list(r)
-                    if not rows:
-                        raise RuntimeError("samples.csv is empty")
-                    numeric_cols = []
-                    for h in (r.fieldnames or []):
-                        vals = []
-                        ok = True
-                        for row in rows[: min(len(rows), 200)]:
-                            v = row.get(h, "")
-                            if v in (None, ""):
-                                continue
-                            try:
-                                vals.append(float(v))
-                            except Exception:
-                                ok = False
-                                break
-                        if ok and vals:
-                            numeric_cols.append(h)
-                    if not numeric_cols:
-                        raise RuntimeError("No numeric columns in samples.csv")
-                    prefer = [h for h in numeric_cols if h.lower() not in ("block_index", "msg_seq_no", "total_block")]
-                    plot_cols = (prefer or numeric_cols)[:4]
-                    x = list(range(len(rows)))
-                    plt.figure()
-                    for col in plot_cols:
-                        y = []
-                        for row in rows:
-                            try:
-                                y.append(float(row.get(col, "nan")))
-                            except Exception:
-                                y.append(float("nan"))
-                        plt.plot(x, y, label=col)
-                    plt.title(f"{title} (samples.csv fallback)")
-                    plt.xlabel("Row")
-                    plt.ylabel("Value")
-                    if len(plot_cols) > 1:
-                        plt.legend()
-                    plt.grid(True)
-                    plt.show()
-                    return
-    
-                # Fallback 2: payload lengths only (debug)
-                if index_path and os.path.exists(index_path):
-                    with open(index_path, "r", newline="", encoding="utf-8") as f:
-                        r = csv.DictReader(f)
-                        rows = list(r)
-                    if not rows:
-                        raise RuntimeError("index.csv is empty")
-                    x = []
-                    y = []
-                    for i, row in enumerate(rows, start=1):
-                        x.append(i)
-                        try:
-                            y.append(float(row.get("payload_len", "nan")))
-                        except Exception:
-                            y.append(float("nan"))
-                    plt.figure()
-                    plt.plot(x, y, label="payload_len")
-                    plt.title(f"{title} (index payload lengths fallback)")
-                    plt.xlabel("Block")
-                    plt.ylabel("Payload length")
-                    plt.grid(True)
-                    plt.legend()
-                    plt.show()
-                    return
-                raise RuntimeError("No export files found")
+                if not raw_path or not os.path.exists(raw_path):
+                    raise RuntimeError("Binary export file not found")
+                
+                # Extract true time waveform from raw protobuf payloads
+                y, meta = WaveformExportTools.extract_true_waveform_samples(raw_path)
+                
+                if not y:
+                    raise RuntimeError("No waveform samples found in export")
+                
+                fs = float(meta.get("fs_hz", 0.0) or 0.0)
+                x = list(range(len(y)))
+                xlabel = "Sample index"
+                
+                if fs > 0.0:
+                    x = [i / fs for i in range(len(y))]
+                    xlabel = f"Time (s) @ Fs={fs:g} Hz"
+                
+                plt.figure(figsize=(12, 6))
+                plt.plot(x, y, linewidth=0.5)
+                plt.title(f"{title} ({meta.get('samples', len(y))} samples)")
+                plt.xlabel(xlabel)
+                plt.ylabel("Acceleration (raw int16)")
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.show()
+                
             except Exception as e:
                 messagebox.showerror("Waveform plot", f"Unable to plot waveform: {e}")
     
@@ -2014,10 +1904,9 @@ def create_app_class(BleCycleWorker, TileState):
                     except Exception:
                         self.demo_overall_var.set("•")
     
-                # Waveform: plot from export_info (raw preferred), once per new raw file.
+                # Waveform: plot from export_info (raw .bin file), once per new raw file.
                 if st.export_info and isinstance(st.export_info, dict):
                     raw_path = st.export_info.get("raw")
-                    samples_path = st.export_info.get("samples")
                     if raw_path and raw_path != self._demo_last_plotted_raw:
                         self._demo_last_plotted_raw = raw_path
                         try:
@@ -2028,18 +1917,6 @@ def create_app_class(BleCycleWorker, TileState):
                             self.demo_plot_label.config(text=f"(plot error: {type(e).__name__})")
                             try:
                                 self._log("ERROR", f"Waveform plot failed: {e}")
-                            except Exception:
-                                pass
-                    elif (not raw_path) and samples_path:
-                        # fallback
-                        try:
-                            self.demo_plot_label.config(text="Rendering waveform (samples)...")
-                            self._demo_plot_waveform_from_samples(samples_path)
-                            self.demo_waveform_var.set("Waveform received")
-                        except Exception as e:
-                            self.demo_plot_label.config(text=f"(plot error: {type(e).__name__})")
-                            try:
-                                self._log("ERROR", f"Waveform plot (samples) failed: {e}")
                             except Exception:
                                 pass
     
