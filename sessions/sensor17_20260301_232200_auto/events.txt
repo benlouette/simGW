@@ -1,2 +1,0 @@
-1772403720012 EVT cycle_start
-1772403720781 EVT disconnect_done

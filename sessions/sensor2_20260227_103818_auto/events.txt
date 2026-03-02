@@ -1,3 +1,0 @@
-1772185098530 EVT cycle_start
-1772185134588 EVT connected:C4:BD:6A:01:02:03
-1772185134909 EVT disconnect_done

@@ -1,3 +1,0 @@
-1772460835536 EVT manual_start:metrics
-1772460847439 EVT connected:C4:BD:6A:01:02:03
-1772460847756 EVT disconnect_done

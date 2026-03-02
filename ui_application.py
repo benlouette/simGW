@@ -141,7 +141,24 @@ def create_app_class(BleCycleWorker, TileState):
             style.configure("TButton", background=self.colors["panel"], foreground=self.colors["text"], padding=(10, 6))
             style.configure("Accent.TButton", background=self.colors["accent"], foreground="#0b0f14", padding=(10, 6))
             style.map("Accent.TButton", background=[("active", self.colors["accent_alt"])])
-    
+
+            # Treeview dark theme
+            style.configure("Treeview",
+                           background=self.colors["panel"],
+                           foreground=self.colors["text"],
+                           fieldbackground=self.colors["panel"],
+                           borderwidth=0)
+            style.configure("Treeview.Heading",
+                           background=self.colors["panel_alt"],
+                           foreground=self.colors["text"],
+                           borderwidth=1,
+                           relief="flat")
+            style.map("Treeview",
+                     background=[("selected", self.colors["accent"])],
+                     foreground=[("selected", "#ffffff")])
+            style.map("Treeview.Heading",
+                     background=[("active", self.colors["border"])])
+
         def _log(self, level: str, msg: str) -> None:
             """Append a timestamped line to the Demo debug console (if present)."""
             try:
@@ -618,6 +635,23 @@ def create_app_class(BleCycleWorker, TileState):
             tree.column("name", width=220, anchor="w")
             tree.column("rssi", width=80, anchor="e")
             tree.column("matched", width=80, anchor="center")
+            
+            # Apply dark theme to treeview
+            tree_style = ttk.Style()
+            tree_style.configure("Treeview",
+                               background=self.colors["panel"],
+                               foreground=self.colors["text"],
+                               fieldbackground=self.colors["panel"],
+                               borderwidth=0)
+            tree_style.configure("Treeview.Heading",
+                               background=self.colors["panel_alt"],
+                               foreground=self.colors["text"],
+                               borderwidth=1,
+                               relief="flat")
+            tree_style.map("Treeview",
+                         background=[("selected", self.colors["accent"])],
+                         foreground=[("selected", "#ffffff")])
+            
             tree.pack(fill=tk.BOTH, expand=True)
 
             tree.bind("<<TreeviewSelect>>", self._devices_on_select)
