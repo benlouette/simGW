@@ -157,6 +157,11 @@ class BleCycleWorker:
                     # Never crash worker on UI update failure
                     pass
 
+    def _create_ui_callback(self, tile_id: int):
+        """Create a UI callback function for BLE helpers to avoid duplication."""
+        def ui_callback(update_dict):
+            self.ui_queue.put(("tile_update", tile_id, update_dict))
+        return ui_callback
 
     async def _run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
                         name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "") -> None:
@@ -398,11 +403,7 @@ class BleCycleWorker:
         self._emit(tile_id, {"status": f"Manual: {action} / connecting...", "address": matched.address, "phase": "connecting"})
         client = BleakClient(matched.address)
         
-        # REFACTORED: Use centralized helpers
-        def ui_callback(update_dict):
-            self.ui_queue.put(("tile_update", tile_id, update_dict))
-        
-        helpers = BleSessionHelpers(client, self.uart_rx_uuid, self.uart_tx_uuid, recorder, ui_callback)
+        helpers = BleSessionHelpers(client, self.uart_rx_uuid, self.uart_tx_uuid, recorder, self._create_ui_callback(tile_id))
 
         try:
             if self._is_cancelled(tile_id):
@@ -799,11 +800,7 @@ class BleCycleWorker:
         self._emit(tile_id, {"status": "Connecting...", "address": matched.address, "phase": "connecting"})
         client = BleakClient(matched.address)
         
-        # REFACTORED: Use centralized helpers
-        def ui_callback(update_dict):
-            self.ui_queue.put(("tile_update", tile_id, update_dict))
-        
-        helpers = BleSessionHelpers(client, self.uart_rx_uuid, self.uart_tx_uuid, recorder, ui_callback)
+        helpers = BleSessionHelpers(client, self.uart_rx_uuid, self.uart_tx_uuid, recorder, self._create_ui_callback(tile_id))
 
         try:
             if self._is_cancelled(tile_id):

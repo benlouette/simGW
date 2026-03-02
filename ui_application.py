@@ -82,22 +82,24 @@ def create_app_class(BleCycleWorker, TileState):
             self.demo_summary = None
             self.demo_debug = None
             self._log_max_lines = 2000
-            # Demo timeline (mirrors the latest Expert tile checklist)
+            #  Demo timeline (mirrors the latest Expert tile checklist)
             self.demo_checklist_state = {key: "pending" for key, _title in CHECKLIST_ITEMS}
             self.demo_timeline_labels = {}  # key -> (dot_label, text_label)
-    
-    
+
+
             # Devices tab state
             self.devices_tree = None
             self.devices_detail = None
             self._devices_last_scan = []
-    
+            self.devices_scan_status_var = tk.StringVar(value="Ready")
+            self._devices_scan_in_progress = False  # Prevent concurrent scans
+
             self._devices_by_addr = {}  # addr -> {"dev":..., "adv":..., "last_seen_ms":...}
             self._devices_autoscan_job = None
             self._devices_autoscan_interval_ms = 3000
             self._devices_tab_widget = None  # set in _build_ui
-    
-    
+
+
             self.address_prefix_var = tk.StringVar(value="C4:BD:6A:")
             # Optional advertising-content filter (applied in addition to address prefix when set)
             self.adv_name_contains_var = tk.StringVar(value="IMx-1_ELO")
@@ -109,7 +111,7 @@ def create_app_class(BleCycleWorker, TileState):
             self.record_sessions_var = tk.BooleanVar(value=True)
             self.session_root_var = tk.StringVar(value="sessions")
             self.mtu_var = tk.StringVar(value="247")
-    
+
             self._apply_theme()
             self._build_ui()
             self._poll_queue()
@@ -572,20 +574,42 @@ def create_app_class(BleCycleWorker, TileState):
             left = tk.Frame(header, bg=self.colors["panel"])
             left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=12, pady=12)
             tk.Label(left, text="Devices & Advertising", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 14, "bold")).pack(anchor="w")
-            tk.Label(left, text="Scan BLE devices and inspect advertising payloads", bg=self.colors["panel"], fg=self.colors["muted"]).pack(anchor="w", pady=(2, 0))
-    
-            controls = tk.Frame(header, bg=self.colors["panel"])
-            controls.pack(side=tk.RIGHT, padx=12, pady=12)
-    
-            ttk.Button(controls, text="Scan", style="Accent.TButton", command=self._devices_scan).pack(side=tk.TOP, pady=(0, 6))
-            ttk.Button(controls, text="Dump ADV (text)", command=self._on_dump_adv).pack(side=tk.TOP, pady=(0, 6))
-            ttk.Button(controls, text="Copy details", command=self._devices_copy_details).pack(side=tk.TOP)
-    
+            tk.Label(left, text="Auto-scan every 3s (5s timeout)", bg=self.colors["panel"], fg=self.colors["muted"]).pack(anchor="w", pady=(2, 0))
+
+            status_frame = tk.Frame(header, bg=self.colors["panel"])
+            status_frame.pack(side=tk.RIGHT, padx=12, pady=12)
+            tk.Label(status_frame, textvariable=self.devices_scan_status_var, bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 10, "bold")).pack()
+
+            # Filters row
+            filters = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+            filters.pack(fill=tk.X, padx=16, pady=(0, 10))
+            filters_in = tk.Frame(filters, bg=self.colors["panel"])
+            filters_in.pack(fill=tk.X, padx=12, pady=8)
+
+            tk.Label(filters_in, text="\U0001F50D Filters:", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+
+            tk.Label(filters_in, text="Address:", bg=self.colors["panel"], fg=self.colors["muted"]).pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Entry(filters_in, textvariable=self.address_prefix_var, width=15).pack(side=tk.LEFT, padx=(0, 12))
+
+            tk.Label(filters_in, text="Name:", bg=self.colors["panel"], fg=self.colors["muted"]).pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Entry(filters_in, textvariable=self.adv_name_contains_var, width=15).pack(side=tk.LEFT, padx=(0, 12))
+
+            tk.Label(filters_in, text="Service UUID:", bg=self.colors["panel"], fg=self.colors["muted"]).pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Entry(filters_in, textvariable=self.adv_service_uuid_contains_var, width=12).pack(side=tk.LEFT)
+
             body = tk.Frame(parent, bg=self.colors["bg"])
             body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
-    
+
+            # Left: Devices list with its own header
+            left_panel = tk.Frame(body, bg=self.colors["bg"])
+            left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
+
+            list_header = tk.Frame(left_panel, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+            list_header.pack(fill=tk.X, pady=(0, 6))
+            tk.Label(list_header, text="\U0001F4E1 BLE Devices", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 10, "bold")).pack(padx=10, pady=6, anchor="w")
+
             cols = ("address", "name", "rssi", "matched")
-            tree = ttk.Treeview(body, columns=cols, show="headings", height=14)
+            tree = ttk.Treeview(left_panel, columns=cols, show="headings", height=14)
             tree.heading("address", text="Address")
             tree.heading("name", text="Name")
             tree.heading("rssi", text="RSSI")
@@ -594,72 +618,85 @@ def create_app_class(BleCycleWorker, TileState):
             tree.column("name", width=220, anchor="w")
             tree.column("rssi", width=80, anchor="e")
             tree.column("matched", width=80, anchor="center")
-            tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-    
+            tree.pack(fill=tk.BOTH, expand=True)
+
             tree.bind("<<TreeviewSelect>>", self._devices_on_select)
             self.devices_tree = tree
-    
-            detail = tk.Frame(body, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            detail.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(12, 0))
-    
+
+            # Right: Advertising details with its own header
+            right_panel = tk.Frame(body, bg=self.colors["bg"])
+            right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(6, 0))
+
+            detail_header = tk.Frame(right_panel, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+            detail_header.pack(fill=tk.X, pady=(0, 6))
+            tk.Label(detail_header, text="\U0001F4CB Advertising Details", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 10, "bold")).pack(padx=10, pady=6, anchor="w")
+
+            detail = tk.Frame(right_panel, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+            detail.pack(fill=tk.BOTH, expand=True)
+
             detail_in = tk.Frame(detail, bg=self.colors["panel"])
             detail_in.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
-            tk.Label(detail_in, text="Advertising details", bg=self.colors["panel"], fg=self.colors["muted"]).pack(anchor="w")
             self.devices_detail = tk.Text(detail_in, wrap="none", bg=self.colors["panel"], fg=self.colors["text"], relief=tk.FLAT)
-            self.devices_detail.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
-            self.devices_detail.insert("1.0", "Click Scan, then select a device.")
+            self.devices_detail.pack(fill=tk.BOTH, expand=True)
+            self.devices_detail.insert("1.0", "Waiting for scan...\nDevices will appear automatically.\nSelect a device to see details.")
             self.devices_detail.configure(state=tk.DISABLED)
-    
+
             self._devices_last_scan = []  # list of (device, adv)
-    
+
         def _build_ui_settings(self, parent: tk.Frame) -> None:
             header = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
             header.pack(fill=tk.X, padx=16, pady=(16, 10))
-    
+
             left = tk.Frame(header, bg=self.colors["panel"])
             left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=12, pady=12)
             tk.Label(left, text="Settings", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 14, "bold")).pack(anchor="w")
             tk.Label(left, text="Configuration and defaults", bg=self.colors["panel"], fg=self.colors["muted"]).pack(anchor="w", pady=(2, 0))
-    
+
             body = tk.Frame(parent, bg=self.colors["bg"])
             body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
-    
+
             # Keep settings simple here: record + session dir + timeouts + MTU.
             box = tk.Frame(body, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
             box.pack(fill=tk.X)
             inner = tk.Frame(box, bg=self.colors["panel"])
             inner.pack(fill=tk.X, padx=12, pady=12)
-    
+
             ttk.Checkbutton(inner, text="Record sessions", variable=self.record_sessions_var).grid(row=0, column=0, sticky="w", padx=(0, 12))
             tk.Label(inner, text="Session dir", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=0, column=1, sticky="e", padx=(12, 6))
             ttk.Entry(inner, textvariable=self.session_root_var, width=24).grid(row=0, column=2, sticky="w")
-    
+
             tk.Label(inner, text="Scan timeout (s)", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=1, column=0, sticky="w", pady=(10, 0))
             ttk.Entry(inner, textvariable=self.scan_timeout_var, width=10).grid(row=1, column=1, sticky="w", pady=(10, 0))
-    
+
             tk.Label(inner, text="RX timeout (s)", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=1, column=2, sticky="w", padx=(12, 0), pady=(10, 0))
             ttk.Entry(inner, textvariable=self.rx_timeout_var, width=10).grid(row=1, column=3, sticky="w", pady=(10, 0))
-    
+
             tk.Label(inner, text="MTU", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=2, column=0, sticky="w", pady=(10, 0))
             ttk.Entry(inner, textvariable=self.mtu_var, width=10).grid(row=2, column=1, sticky="w", pady=(10, 0))
-    
+
             util = tk.Frame(body, bg=self.colors["bg"])
             util.pack(fill=tk.X, pady=(12, 0))
             ttk.Button(util, text="Clear Logs", command=self._clear_tiles).pack(side=tk.LEFT)
             ttk.Button(util, text="Stop Auto", command=self._stop_auto).pack(side=tk.LEFT, padx=(8, 0))
-    
+        
         def _devices_scan(self) -> None:
             """Trigger one scan pass and merge results into the Devices table (no clear, no dup)."""
-            # show progress but DO NOT clear existing rows
+            # Prevent concurrent scans (fix thread leak)
+            if self._devices_scan_in_progress:
+                return
+            
+            self._devices_scan_in_progress = True
+            
             try:
-                self._devices_set_details("Scanning... (auto-refresh every 3s, results are merged)")
+                self.devices_scan_status_var.set("\U0001F50D Scanning...")
+                self.root.update_idletasks()
             except Exception:
                 pass
-    
-            # Read current filters + timeout
-            addr_prefix, _mtu, scan_timeout, _rx_timeout, _rec, _sess, name_contains, svc_contains, mfg_id_hex, mfg_data_hex = self._read_runtime_params()
-            timeout_s = float(scan_timeout) if str(scan_timeout).strip() else 3.0
-    
+
+            # Read current filters (use fixed 5s timeout)
+            addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, svc_contains, mfg_id_hex, mfg_data_hex = self._read_runtime_params()
+            timeout_s = 5.0  # Fixed 5 second timeout
+
             def worker():
                 try:
                     async def _do():
@@ -680,14 +717,18 @@ def create_app_class(BleCycleWorker, TileState):
                                 else:
                                     pairs.append((item, None))
                         return pairs
-    
+
                     pairs = asyncio.run(_do())
                     self.root.after(0, lambda: self._devices_populate(pairs))
                 except Exception as exc:
                     # Do not crash autoscan; just report
-                    self.root.after(0, lambda: self._devices_set_details(f"Scan error: {type(exc).__name__}: {exc}"))
-    
+                    self.root.after(0, lambda: self.devices_scan_status_var.set(f"\u274c Error: {type(exc).__name__}"))
+                finally:
+                    # Always reset flag when scan completes
+                    self.root.after(0, lambda: setattr(self, '_devices_scan_in_progress', False))
+
             threading.Thread(target=worker, daemon=True).start()
+
         def _devices_populate(self, pairs):
             """Merge scan results into the tree (no clear, no duplicates)."""
             if not hasattr(self, "_devices_by_addr"):
@@ -758,7 +799,12 @@ def create_app_class(BleCycleWorker, TileState):
                     except Exception:
                         pass
     
-            self._devices_set_details(f"Known devices: {len(self._devices_by_addr)} (added {added}, updated {updated}), matched this scan: {matched}. Select a row for details.")
+            # Update status with results (don't overwrite selected device details!)
+            total = len(self._devices_by_addr)
+            if added > 0:
+                self.devices_scan_status_var.set(f"\u2713 {total} devices (+{added} new, {matched} matched)")
+            else:
+                self.devices_scan_status_var.set(f"\u2713 {total} devices ({matched} matched)")
         def _devices_on_select(self, _evt):
             sel = self.devices_tree.selection()
             if not sel:
@@ -772,8 +818,13 @@ def create_app_class(BleCycleWorker, TileState):
             dev = item.get("dev")
             adv = item.get("adv")
             txt = self._format_adv_details(dev, adv)
-            self._devices_set_details(txt)
+            # Display device details (don't use _devices_set_details to avoid confusion)
+            self.devices_detail.configure(state=tk.NORMAL)
+            self.devices_detail.delete("1.0", tk.END)
+            self.devices_detail.insert("1.0", txt)
+            self.devices_detail.configure(state=tk.DISABLED)
         def _devices_set_details(self, txt: str):
+            """Legacy method - now only used for initial message. Don't use for stats!"""
             self.devices_detail.configure(state=tk.NORMAL)
             self.devices_detail.delete("1.0", tk.END)
             self.devices_detail.insert("1.0", txt)
