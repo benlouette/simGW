@@ -60,7 +60,7 @@ WaveformExportTools = WaveformParser
 
 @dataclass
 class TileStatus:
-    address: str = "â€”"
+    address: str = "•"
     status: str = "Queued"
     rx_text: str = ""
 
@@ -70,7 +70,7 @@ class TileStatus:
 class TileState:
     """Structured state for a tile, used for UI updates (never parse rx_text for logic)."""
     status: str = "Queued"
-    address: str = "â€”"
+    address: str = "•"
     session_dir: str = ""
     rx_text: str = ""
     checklist: Dict[str, str] = None  # key -> state
@@ -381,14 +381,14 @@ class BleCycleWorker:
                 except asyncio.TimeoutError:
                     continue
         except asyncio.TimeoutError:
-            self._emit(tile_id, {"status": "Not found", "address": "â€”"})
+            self._emit(tile_id, {"status": "Not found", "address": "•"})
             return
         finally:
             await scanner.stop()
 
         matched = matched_device["value"]
         if not matched:
-            self._emit(tile_id, {"status": "Not found", "address": "â€”"})
+            self._emit(tile_id, {"status": "Not found", "address": "•"})
             if recorder is not None:
                 recorder.log_text("not_found")
                 recorder.close()
@@ -779,14 +779,14 @@ class BleCycleWorker:
             try:
                 await asyncio.wait_for(found_event.wait(), timeout=scan_timeout)
             except asyncio.TimeoutError:
-                self._emit(tile_id, {"status": "Not found", "address": "â€”"})
+                self._emit(tile_id, {"status": "Not found", "address": "•"})
                 return
         finally:
             await scanner.stop()
 
         matched = matched_device["value"]
         if not matched:
-            self._emit(tile_id, {"status": "Not found", "address": "â€”"})
+            self._emit(tile_id, {"status": "Not found", "address": "•"})
             if recorder is not None:
                 recorder.log_text("not_found")
                 recorder.close()
