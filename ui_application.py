@@ -753,9 +753,13 @@ def create_app_class(BleCycleWorker, TileState):
                     continue
     
                 ok = self._adv_matches(dev, adv, addr_prefix, name_contains, svc_contains, mfg_id_hex, mfg_data_hex)
-                if ok:
-                    matched += 1
-    
+                
+                # Skip devices that don't match filters
+                if not ok:
+                    continue
+                
+                matched += 1
+
                 name = ""
                 try:
                     name = getattr(dev, "name", "") if not isinstance(dev, str) else ""
@@ -766,7 +770,7 @@ def create_app_class(BleCycleWorker, TileState):
                         name = getattr(adv, "local_name", "") or ""
                     except Exception:
                         name = ""
-    
+
                 rssi = ""
                 if adv is not None:
                     try:
@@ -774,12 +778,12 @@ def create_app_class(BleCycleWorker, TileState):
                         rssi = "" if rv is None else str(rv)
                     except Exception:
                         rssi = ""
-    
-                mark = "✔" if ok else ""
-    
+
+                mark = "✔"  # All displayed devices match
+
                 prev = self._devices_by_addr.get(addr)
                 self._devices_by_addr[addr] = {"dev": dev, "adv": adv, "last_seen_ms": now_ms}
-    
+
                 if prev is None:
                     try:
                         # iid = address => stable mapping (no mismatch)
@@ -802,9 +806,9 @@ def create_app_class(BleCycleWorker, TileState):
             # Update status with results (don't overwrite selected device details!)
             total = len(self._devices_by_addr)
             if added > 0:
-                self.devices_scan_status_var.set(f"\u2713 {total} devices (+{added} new, {matched} matched)")
+                self.devices_scan_status_var.set(f"\u2713 {total} devices (+{added} new)")
             else:
-                self.devices_scan_status_var.set(f"\u2713 {total} devices ({matched} matched)")
+                self.devices_scan_status_var.set(f"\u2713 {total} devices")
         def _devices_on_select(self, _evt):
             sel = self.devices_tree.selection()
             if not sel:
@@ -840,32 +844,90 @@ def create_app_class(BleCycleWorker, TileState):
     
         def _format_adv_details(self, device, adv) -> str:
             lines = []
-            lines.append(f"Address: {getattr(device, 'address', device)}")
-            lines.append(f"Name: {getattr(device, 'name', '')}")
+            lines.append("=" * 60)
+            lines.append(f"📱 DEVICE INFORMATION")
+            lines.append("=" * 60)
+            lines.append(f"Address:     {getattr(device, 'address', device)}")
+            lines.append(f"Name:        {getattr(device, 'name', '') or '(unnamed)'}")
+            
             if adv is None:
                 lines.append("No AdvertisingData available.")
                 return "\n".join(lines)
     
-            lines.append(f"Local name: {getattr(adv, 'local_name', None)}")
-            lines.append(f"RSSI: {getattr(adv, 'rssi', None)}")
-            lines.append(f"TX power: {getattr(adv, 'tx_power', None)}")
+            lines.append("")
+            lines.append("=" * 60)
+            lines.append(f"📡 ADVERTISING DATA")
+            lines.append("=" * 60)
+            lines.append(f"Local name:  {getattr(adv, 'local_name', None) or '(not set)'}")
+            lines.append(f"RSSI:        {getattr(adv, 'rssi', None)} dBm")
+            
+            tx = getattr(adv, 'tx_power', None)
+            lines.append(f"TX power:    {tx if tx is not None else '(not advertised)'}")
+            
+            # Platform data (if any)
+            platform = getattr(adv, 'platform_data', None)
+            if platform:
+                lines.append(f"Platform:    {platform}")
+            
+            lines.append("")
+            
+            # Service UUIDs
             su = getattr(adv, "service_uuids", None) or []
             if su:
-                lines.append("Service UUIDs:")
+                lines.append(f"🔧 SERVICE UUIDs ({len(su)}):")
                 for u in su:
-                    lines.append(f"  - {u}")
+                    # Try to show short UUID for standard services
+                    if len(u) > 8:
+                        lines.append(f"  • {u}")
+                    else:
+                        lines.append(f"  • {u} (short)")
+            else:
+                lines.append("🔧 SERVICE UUIDs: (none)")
+            
+            lines.append("")
+            
+            # Manufacturer data with known IDs
             md = getattr(adv, "manufacturer_data", None) or {}
             if md:
-                lines.append("Manufacturer data:")
+                lines.append(f"🏭 MANUFACTURER DATA ({len(md)} entries):")
+                
+                # Known manufacturer IDs
+                known_mfg = {
+                    0x004C: "Apple Inc.",
+                    0x0059: "Nordic Semiconductor ASA",
+                    0x006A: "Abbott Diabetes Care",
+                    0x0075: "Samsung Electronics Co. Ltd.",
+                    0x00E0: "Google LLC",
+                    0x0087: "Garmin International, Inc.",
+                    0x0157: "Huawei Technologies Co., Ltd.",
+                }
+                
                 for k, v in md.items():
                     vv = bytes(v) if not isinstance(v, (bytes, bytearray)) else v
-                    lines.append(f"  - 0x{k:04X}: {vv.hex()}")
+                    mfg_name = known_mfg.get(k, "Unknown")
+                    lines.append(f"  • ID: 0x{k:04X} ({mfg_name})")
+                    lines.append(f"    Data: {vv.hex().upper()}")
+                    lines.append(f"    Len:  {len(vv)} bytes")
+            else:
+                lines.append("🏭 MANUFACTURER DATA: (none)")
+            
+            lines.append("")
+            
+            # Service data
             sd = getattr(adv, "service_data", None) or {}
             if sd:
-                lines.append("Service data:")
+                lines.append(f"🔐 SERVICE DATA ({len(sd)} entries):")
                 for k, v in sd.items():
                     vv = bytes(v) if not isinstance(v, (bytes, bytearray)) else v
-                    lines.append(f"  - {k}: {vv.hex()}")
+                    lines.append(f"  • UUID: {k}")
+                    lines.append(f"    Data: {vv.hex().upper()}")
+                    lines.append(f"    Len:  {len(vv)} bytes")
+            else:
+                lines.append("🔐 SERVICE DATA: (none)")
+            
+            lines.append("")
+            lines.append("=" * 60)
+            
             return "\n".join(lines)
     
         def _adv_matches(self, dev, adv, addr_prefix: str, name_contains: str, svc_contains: str, mfg_id_hex: str, mfg_data_hex: str) -> bool:
