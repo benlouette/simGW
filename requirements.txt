@@ -1,1 +1,5 @@
-bleak==0.21.1
+# BLE communication
+bleak>=0.21.1
+
+# Protocol Buffers for message encoding/decoding
+protobuf>=4.21.0

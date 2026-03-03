@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package SKF.fota;
+
+
+message fota_start {
+
+}
+
+message fota_slice {
+
+}
+
+message fota_verify {
+
+}

@@ -1,6 +1,6 @@
 """
 BLE Session Helpers - Centralized BLE communication logic
-Extracted from simGw_v9_Temp.py to eliminate duplication
+Updated for new simplified SKF protocol
 """
 
 import asyncio
@@ -11,17 +11,18 @@ import os
 import sys
 
 BASE_DIR = os.path.dirname(__file__)
-FROTO_DIR = os.path.join(BASE_DIR, "froto")
+PROTOCOL_DIR = os.path.join(BASE_DIR, "protocol")
 CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
-if FROTO_DIR not in sys.path:
-    sys.path.insert(0, FROTO_DIR)
+if PROTOCOL_DIR not in sys.path:
+    sys.path.insert(0, PROTOCOL_DIR)
     
-import DeviceAppBulletSensor_pb2
-import ConfigurationAndCommand_pb2
-import Common_pb2
-import FirmwareUpdateOverTheAir_pb2
-import Froto_pb2
-import SensingDataUpload_pb2
+import app_pb2
+import session_pb2
+import measurement_pb2
+import command_pb2
+import common_pb2
+import configuration_pb2
+import fota_pb2
 
 
 class BleSessionHelpers:
@@ -106,26 +107,23 @@ class BleSessionHelpers:
             await asyncio.wait_for(self.rx_event.wait(), timeout=remaining)
 
     def _alloc_seq(self) -> int:
-        """Allocate next message sequence number."""
+        """Allocate next message sequence number (message_id in new protocol)."""
         v = self.next_seq_no
         self.next_seq_no += 1
         return v
 
-    def _mk_header(self) -> Froto_pb2.FrotoHeader:
-        """Create standard Froto header."""
-        return Froto_pb2.FrotoHeader(
+    def _mk_header(self, total_fragments: int = 1, current_fragment: int = 1) -> common_pb2.Header:
+        """Create standard header for new protocol."""
+        return common_pb2.Header(
             version=1,
-            is_up=False,
-            message_seq_no=self._alloc_seq(),
-            time_to_live=3,
-            primitive_type=Froto_pb2.SIMPLE_DISSEMINATE,
-            message_type=Froto_pb2.NORMAL_MESSAGE,
-            total_block=1,
+            message_id=self._alloc_seq(),
+            current_fragment=current_fragment,
+            total_fragments=total_fragments,
         )
 
     async def write_app_message(self, app_msg) -> bytes:
         """
-        Serialize and write AppMessage to device.
+        Serialize and write App message to device.
         
         Returns:
             bytes: Serialized payload
@@ -146,158 +144,143 @@ class BleSessionHelpers:
         return payload
 
     def _safe_parse_app(self, payload: bytes):
-        """Parse AppMessage from bytes."""
-        msg = DeviceAppBulletSensor_pb2.AppMessage()
+        """Parse App message from bytes."""
+        msg = app_pb2.App()
         msg.ParseFromString(payload)
         return msg
 
     def _pb_message_type(self, payload: bytes) -> str:
         """Extract message type from protobuf payload."""
         try:
-            message = DeviceAppBulletSensor_pb2.AppMessage()
+            message = app_pb2.App()
             message.ParseFromString(payload)
-            return message.WhichOneof("_messages") or "(none)"
+            return message.WhichOneof("payload") or "(none)"
         except Exception:
             return "(parse_error)"
 
     async def recv_app(self, timeout_s: float) -> tuple:
         """
-        Receive and parse next AppMessage.
+        Receive and parse next App message.
         
         Returns:
-            tuple: (payload: bytes, msg: AppMessage, msg_type: str)
+            tuple: (payload: bytes, msg: App, msg_type: str)
             
         Raises:
             asyncio.TimeoutError: If timeout expires
         """
         payload = await self.wait_next_rx(timeout_s)
         msg = self._safe_parse_app(payload)
-        msg_type = msg.WhichOneof("_messages") or "(none)"
+        msg_type = msg.WhichOneof("payload") or "(none)"
         return payload, msg, msg_type
 
-    # --- Protocol-specific message senders ---
+    # --- Protocol-specific message senders (new protocol) ---
 
-    async def send_config_time(self) -> None:
-        """Send current time configuration."""
-        current_time_ms = int(time.time() * 1000)
-        config_pair = ConfigurationAndCommand_pb2.ConfigPair(
-            specific_config_item=Common_pb2.CURRENT_TIME,
-            time_config_content=ConfigurationAndCommand_pb2.TimeArray(
-                time=[ConfigurationAndCommand_pb2.TimeArrayElement(time=current_time_ms)]
-            ),
-        )
-        config_dissem = ConfigurationAndCommand_pb2.ConfigDisseminate(
-            header=self._mk_header(),
-            appVer=1,
-            product=Common_pb2.UNKNOWN_PRODUCT,
-            config_pair=[config_pair],
+    async def send_open_session(self) -> None:
+        """Send OpenSession message to start a session with the sensor."""
+        current_sync_time = int(time.time())  # Unix time in seconds
+        open_session = session_pb2.OpenSession(
+            current_sync_time=current_sync_time
         )
         await self.write_app_message(
-            DeviceAppBulletSensor_pb2.AppMessage(appVer=1, config_dissem=config_dissem)
+            app_pb2.App(header=self._mk_header(), open_session=open_session)
         )
+
+    # Legacy compatibility: send_config_time now calls send_open_session
+    async def send_config_time(self) -> None:
+        """Legacy method - redirects to send_open_session."""
+        await self.send_open_session()
 
     async def send_version_retrieve(self) -> None:
-        """Request device firmware version."""
-        msg = FirmwareUpdateOverTheAir_pb2.VersionRetrieve(
-            header=self._mk_header(),
-            appVer=1,
-            payload=FirmwareUpdateOverTheAir_pb2.CURRENT_VERSION,
-        )
-        await self.write_app_message(
-            DeviceAppBulletSensor_pb2.AppMessage(appVer=1, version_retrieve=msg)
-        )
+        """
+        Legacy method - no longer needed in new protocol.
+        Version info comes automatically in AcceptSession.
+        This now sends AcceptSession request by sending OpenSession.
+        """
+        await self.send_open_session()
 
     async def send_config_hash_retrieve(self) -> None:
-        """Request device configuration hash."""
-        msg = ConfigurationAndCommand_pb2.ConfigRetrieve(
-            header=self._mk_header(),
-            appVer=1,
-            payload=ConfigurationAndCommand_pb2.CURRENT_CONFIG_HASH,
-        )
-        await self.write_app_message(
-            DeviceAppBulletSensor_pb2.AppMessage(appVer=1, config_retrieve=msg)
-        )
+        """
+        Legacy method - no longer needed in new protocol.
+        Config hash comes automatically in AcceptSession.
+        This is now a no-op for compatibility.
+        """
+        pass  # No-op: config hash is in AcceptSession already
 
-    async def send_metrics_selection(self, sample_time_end_ms: int) -> None:
-        """Request overall metrics (temperature, humidity, voltage)."""
-        measure_types = [
-            SensingDataUpload_pb2.MeasurementTypeMsg(
-                measure_type=Common_pb2.ENVIROMENTAL_TEMPERATURE_CURRENT
-            ),
-            SensingDataUpload_pb2.MeasurementTypeMsg(
-                measure_type=Common_pb2.ENVIROMENTAL_HUMIDITY_CURRENT
-            ),
-            SensingDataUpload_pb2.MeasurementTypeMsg(
-                measure_type=Common_pb2.VOLTAGE_CURRENT
-            ),
+    async def send_measurement_request(self, measurement_types: list) -> None:
+        """
+        Request measurements from sensor.
+        
+        Args:
+            measurement_types: List of MeasurementType enum values (integers)
+        """
+        measurement_type_msgs = [
+            measurement_pb2.measurementType(measurement_type=mt) 
+            for mt in measurement_types
         ]
-        msg = SensingDataUpload_pb2.DataSelectionDisseminate(
-            header=self._mk_header(),
-            appVer=1,
-            product=Common_pb2.UNKNOWN_PRODUCT,
-            measure_type=measure_types,
-            sample_time_start=0,
-            sample_time_end=sample_time_end_ms,
+        meas_request = measurement_pb2.measurementRequest(
+            measurement=measurement_type_msgs
         )
         await self.write_app_message(
-            DeviceAppBulletSensor_pb2.AppMessage(appVer=1, data_selection=msg)
+            app_pb2.App(header=self._mk_header(), measurement_request=meas_request)
         )
 
-    async def send_vibration_selection(self, sample_time_end_ms: int) -> None:
-        """Request vibration waveform data."""
-        msg = SensingDataUpload_pb2.DataSelectionDisseminate(
-            header=self._mk_header(),
-            appVer=1,
-            product=Common_pb2.UNKNOWN_PRODUCT,
-            measure_type=[
-                SensingDataUpload_pb2.MeasurementTypeMsg(
-                    measure_type=Common_pb2.VIBRATION_ACC_WAVE
-                )
-            ],
-            sample_time_start=0,
-            sample_time_end=sample_time_end_ms,
-        )
-        await self.write_app_message(
-            DeviceAppBulletSensor_pb2.AppMessage(appVer=1, data_selection=msg)
-        )
+    async def send_metrics_selection(self, sample_time_end_ms: int = 0) -> None:
+        """
+        Request all overall metrics (acceleration, velocity, enveloper3, temperature).
+        Legacy compatibility method - sample_time_end_ms parameter ignored in new protocol.
+        """
+        measurement_types = [
+            1,  # MeasurementTypeAccelerationOverall
+            2,  # MeasurementTypeVelocityOverall
+            3,  # MeasurementTypeEnveloper3Overall
+            4,  # MeasurementTypeTemperatureOverall
+        ]
+        await self.send_measurement_request(measurement_types)
+
+    async def send_vibration_selection(self, sample_time_end_ms: int = 0, twf_type: int = None) -> None:
+        """
+        Request vibration waveform data (TWF).
+        
+        IMPORTANT: Sensor supports only ONE TWF measurement per request.
+        
+        Args:
+            sample_time_end_ms: Legacy parameter, ignored in new protocol
+            twf_type: TWF measurement type to request (5=Acceleration, 6=Velocity, 7=Enveloper3)
+                     If None, uses DEFAULT_TWF_TYPE from config
+        """
+        from config import DEFAULT_TWF_TYPE
+        if twf_type is None:
+            twf_type = DEFAULT_TWF_TYPE
+        
+        # Sensor only accepts ONE TWF type per request
+        measurement_types = [twf_type]
+        await self.send_measurement_request(measurement_types)
 
     async def send_close_session(self) -> None:
-        """Send close session command."""
-        msg = ConfigurationAndCommand_pb2.CommandDisseminate(
-            header=self._mk_header(),
-            appVer=1,
-            command_pair=ConfigurationAndCommand_pb2.CommandPair(
-                command=Common_pb2.CLOSE_SESSION
-            ),
+        """Send CloseSession command."""
+        close_cmd = command_pb2.Command(
+            command=command_pb2.CommandTypeCloseSession
         )
         await self.write_app_message(
-            DeviceAppBulletSensor_pb2.AppMessage(appVer=1, command_dissem=msg)
+            app_pb2.App(header=self._mk_header(), command=close_cmd)
         )
 
     # --- Common sequences ---
 
     async def setup_sync_time_version_hash(self, rx_timeout: float) -> tuple:
         """
-        Perform standard setup sequence: sync time, get version, get config hash.
+        Perform standard setup sequence: open session and receive AcceptSession.
         
         Returns:
-            tuple: (version_payload, version_msg, hash_payload, hash_msg) or None on timeout
+            tuple: (payload, msg, msg_type) of AcceptSession or None on timeout
         """
-        await self.send_config_time()
+        await self.send_open_session()
         await asyncio.sleep(0.1)
         
-        await self.send_version_retrieve()
         try:
-            version_payload, version_msg, version_type = await self.recv_app(rx_timeout)
+            payload, msg, msg_type = await self.recv_app(rx_timeout)
+            if msg_type == "accept_session":
+                return (payload, msg, msg_type)
+            return None
         except asyncio.TimeoutError:
             return None
-        
-        await asyncio.sleep(0.1)
-        await self.send_config_hash_retrieve()
-        
-        try:
-            hash_payload, hash_msg, hash_type = await self.recv_app(rx_timeout)
-        except asyncio.TimeoutError:
-            return None
-        
-        return version_payload, version_msg, hash_payload, hash_msg

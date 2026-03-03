@@ -1,0 +1,1545 @@
+================================================================================
+SESSION: sensor1_20260303_151500_auto
+STARTED: 2026-03-03 15:15:00
+================================================================================
+
+[2026-03-03 15:15:00] EVENT | cycle_start
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] EVENT | connected:C4:BD:6A:01:02:03
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] TX | write | open_session
+  Length: 18 bytes
+  Key fields:
+    sync_time: 1772547303
+  Hex:
+    0A 08 08 01 10 01 20 01 28 01 52 06 08 E7 D9 9B CD 06
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 1
+      current_fragment: 1
+      total_fragments: 1
+    }
+    open_session {
+      current_sync_time: 1772547303
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | accept_session
+  Length: 42 bytes
+  Key fields:
+    virtual_id: 0
+    hw_type: 1
+    fw_version: 66051
+    serial: c4bd6a010203
+    battery: 95
+    config_hash: 4294967295
+  Hex:
+    0A 04 08 01 10 01 5A 22 10 01 18 05 22 06 C4 BD 6A 01 02 03 28 83 84 04 30 83 84 04 38 FF FF FF
+    FF 0F 48 5F 52 04 0A 02 08 77
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 1
+    }
+    accept_session {
+      hardware_type: HardwareTypeCmwa6120_std
+      hw_version: 5
+      serial: "\304\275j\001\002\003"
+      fw_version: 66051
+      fw_cache_version: 66051
+      config_hash: 4294967295
+      battery_indicator: 95
+      session_info {
+        session_info_ble {
+          rssi: -60
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] TX | write | measurement_request
+  Length: 28 bytes
+  Key fields:
+    requested_types: 4
+  Hex:
+    0A 08 08 01 10 02 20 01 28 01 62 10 0A 02 08 01 0A 02 08 02 0A 02 08 03 0A 02 08 04
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 2
+      current_fragment: 1
+      total_fragments: 1
+    }
+    measurement_request {
+      measurement {
+        measurement_type: MeasurementTypeAccelerationOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeVelocityOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeEnveloper3Overall
+      }
+      measurement {
+        measurement_type: MeasurementTypeTemperatureOverall
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 110 bytes
+  Key fields:
+    measurement_count: 4
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 2
+    }
+    send_measurement {
+      common_meta_data {
+        time: 11936128518282651045
+        config_hash: 2779096485
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeAccelerationOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 78
+            rms: 11
+            peak: 39
+            std: 11
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeVelocityOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 90
+            rms: 14
+            peak: 45
+            std: 14
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeEnveloper3Overall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 38
+            rms: 18
+            peak: 23
+            std: 7
+            mean: 17
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeTemperatureOverall
+          }
+        }
+        data {
+          int32_data: 53
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] TX | write | measurement_request
+  Length: 28 bytes
+  Key fields:
+    requested_types: 4
+  Hex:
+    0A 08 08 01 10 03 20 01 28 01 62 10 0A 02 08 01 0A 02 08 02 0A 02 08 03 0A 02 08 04
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 3
+      current_fragment: 1
+      total_fragments: 1
+    }
+    measurement_request {
+      measurement {
+        measurement_type: MeasurementTypeAccelerationOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeVelocityOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeEnveloper3Overall
+      }
+      measurement {
+        measurement_type: MeasurementTypeTemperatureOverall
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 110 bytes
+  Key fields:
+    measurement_count: 4
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 3
+    }
+    send_measurement {
+      common_meta_data {
+        time: 11936128518282651045
+        config_hash: 2779096485
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeAccelerationOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 78
+            rms: 11
+            peak: 39
+            std: 11
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeVelocityOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 90
+            rms: 14
+            peak: 45
+            std: 14
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeEnveloper3Overall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 38
+            rms: 18
+            peak: 23
+            std: 7
+            mean: 17
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeTemperatureOverall
+          }
+        }
+        data {
+          int32_data: 53
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] TX | write | measurement_request
+  Length: 28 bytes
+  Key fields:
+    requested_types: 4
+  Hex:
+    0A 08 08 01 10 04 20 01 28 01 62 10 0A 02 08 01 0A 02 08 02 0A 02 08 03 0A 02 08 04
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 4
+      current_fragment: 1
+      total_fragments: 1
+    }
+    measurement_request {
+      measurement {
+        measurement_type: MeasurementTypeAccelerationOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeVelocityOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeEnveloper3Overall
+      }
+      measurement {
+        measurement_type: MeasurementTypeTemperatureOverall
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 110 bytes
+  Key fields:
+    measurement_count: 4
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 4
+    }
+    send_measurement {
+      common_meta_data {
+        time: 11936128518282651045
+        config_hash: 2779096485
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeAccelerationOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 78
+            rms: 11
+            peak: 39
+            std: 11
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeVelocityOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 90
+            rms: 14
+            peak: 45
+            std: 14
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeEnveloper3Overall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 38
+            rms: 18
+            peak: 23
+            std: 7
+            mean: 17
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeTemperatureOverall
+          }
+        }
+        data {
+          int32_data: 53
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] TX | write | measurement_request
+  Length: 28 bytes
+  Key fields:
+    requested_types: 4
+  Hex:
+    0A 08 08 01 10 05 20 01 28 01 62 10 0A 02 08 01 0A 02 08 02 0A 02 08 03 0A 02 08 04
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 5
+      current_fragment: 1
+      total_fragments: 1
+    }
+    measurement_request {
+      measurement {
+        measurement_type: MeasurementTypeAccelerationOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeVelocityOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeEnveloper3Overall
+      }
+      measurement {
+        measurement_type: MeasurementTypeTemperatureOverall
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 110 bytes
+  Key fields:
+    measurement_count: 4
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 5
+    }
+    send_measurement {
+      common_meta_data {
+        time: 11936128518282651045
+        config_hash: 2779096485
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeAccelerationOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 78
+            rms: 11
+            peak: 39
+            std: 11
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeVelocityOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 90
+            rms: 14
+            peak: 45
+            std: 14
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeEnveloper3Overall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 38
+            rms: 18
+            peak: 23
+            std: 7
+            mean: 17
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeTemperatureOverall
+          }
+        }
+        data {
+          int32_data: 53
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] TX | write | measurement_request
+  Length: 28 bytes
+  Key fields:
+    requested_types: 4
+  Hex:
+    0A 08 08 01 10 06 20 01 28 01 62 10 0A 02 08 01 0A 02 08 02 0A 02 08 03 0A 02 08 04
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 6
+      current_fragment: 1
+      total_fragments: 1
+    }
+    measurement_request {
+      measurement {
+        measurement_type: MeasurementTypeAccelerationOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeVelocityOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeEnveloper3Overall
+      }
+      measurement {
+        measurement_type: MeasurementTypeTemperatureOverall
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 110 bytes
+  Key fields:
+    measurement_count: 4
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 6
+    }
+    send_measurement {
+      common_meta_data {
+        time: 11936128518282651045
+        config_hash: 2779096485
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeAccelerationOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 78
+            rms: 11
+            peak: 39
+            std: 11
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeVelocityOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 90
+            rms: 14
+            peak: 45
+            std: 14
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeEnveloper3Overall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 38
+            rms: 18
+            peak: 23
+            std: 7
+            mean: 17
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeTemperatureOverall
+          }
+        }
+        data {
+          int32_data: 53
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] TX | write | measurement_request
+  Length: 28 bytes
+  Key fields:
+    requested_types: 4
+  Hex:
+    0A 08 08 01 10 07 20 01 28 01 62 10 0A 02 08 01 0A 02 08 02 0A 02 08 03 0A 02 08 04
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 7
+      current_fragment: 1
+      total_fragments: 1
+    }
+    measurement_request {
+      measurement {
+        measurement_type: MeasurementTypeAccelerationOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeVelocityOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeEnveloper3Overall
+      }
+      measurement {
+        measurement_type: MeasurementTypeTemperatureOverall
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 110 bytes
+  Key fields:
+    measurement_count: 4
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 7
+    }
+    send_measurement {
+      common_meta_data {
+        time: 11936128518282651045
+        config_hash: 2779096485
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeAccelerationOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 78
+            rms: 11
+            peak: 39
+            std: 11
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeVelocityOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 90
+            rms: 14
+            peak: 45
+            std: 14
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeEnveloper3Overall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 38
+            rms: 18
+            peak: 23
+            std: 7
+            mean: 17
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeTemperatureOverall
+          }
+        }
+        data {
+          int32_data: 53
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] TX | write | measurement_request
+  Length: 16 bytes
+  Key fields:
+    requested_types: 1
+  Hex:
+    0A 08 08 01 10 08 20 01 28 01 62 04 0A 02 08 05
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 1
+      total_fragments: 1
+    }
+    measurement_request {
+      measurement {
+        measurement_type: MeasurementTypeAccelerationTwf
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 242 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 1
+      total_fragments: 43
+    }
+    send_measurement {
+      common_meta_data {
+        time: 11936128518282651045
+        config_hash: 2779096485
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeAccelerationTwf
+            duration: 159
+          }
+        }
+        data {
+          data_bytes: "\375\377\r\000\376\377\t\000\377\377\374\377\376\377\013\000\373\377\016\000\000\000\025\000\001\000\n\000\377\377\373\377\374\377\362\377\375\377\366\377\n\000\373\377\001\000\370\377\005\000\361\377\000\000\366\377\344\377\377\377\n\000\357\377\360\377\021\000\004\000\363\377\375\377\t\000\375\377\013\000\021\000\t\000\002\000\341\377\356\377\370\377\n\000\367\377\370\377\371\377\000\000\036\000\376\377\370\377\357\377\004\000\374\377\375\377\036\000\013\000\362\377\373\377\000\000\010\000\361\377\354\377\377\377\010\000\r\000\363\377\377\377\376\377\002\000\014\000\000\000\372\377\021\000\000\000\375\377\t\000\025\000\007\000\014\000\005\000\365\377\377\377\371\377\004\000\375\377\365\377\000\000\r\000\002\000\020\000\372\377\362\377"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 2
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\371\377\007\000\r\000\010\000\005\000\001\000\r\000\363\377\375\377\377\377\376\377\376\377\020\000\000\000\372\377\004\000\003\000\017\000\365\377\377\377\370\377\372\377\014\000\374\377\016\000\t\000\006\000\010\000\372\377\001\000\366\377\003\000\001\000\363\377\372\377\003\000\372\377\002\000\365\377\r\000\r\000\356\377\354\377\004\000\001\000\000\000\014\000\376\377\001\000\006\000\020\000\374\377\374\377\364\377\362\377\006\000\005\000\375\377\375\377\010\000\003\000\347\377\374\377\362\377\002\000\006\000\373\377\004\000\376\377\351\377\014\000\000\000\361\377\377\377\005\000\006\000\351\377\024\000\032\000\365\377\017\000\027\000\377\377\024\000\000\000\r\000\374\377\375\377\372\377\r\000\t\000\372\377\007\000\010\000\376\377\366\377"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 3
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\374\377\356\377\363\377\367\377\364\377\372\377\357\377\022\000\n\000\353\377\363\377\344\377\374\377\r\000\376\377\364\377\006\000\n\000\361\377\372\377\375\377\373\377\374\377\017\000\017\000\r\000\346\377\373\377\t\000\003\000\006\000\357\377\006\000\021\000\377\377\002\000\001\000\376\377\013\000\370\377\365\377\355\377\360\377\014\000\020\000\376\377\r\000\001\000\370\377\003\000\003\000\001\000\375\377\005\000\007\000\366\377\010\000\001\000\001\000\014\000\r\000\022\000\000\000\002\000\377\377\022\000\361\377\007\000\000\000\n\000\374\377\351\377\014\000\014\000\005\000\003\000\375\377\003\000\025\000\371\377\375\377\376\377\376\377\344\377\003\000\360\377\374\377\003\000\014\000\365\377\024\000\020\000\r\000\017\000\001\000\002\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 4
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\014\000\001\000\014\000\025\000\356\377\362\377\361\377\377\377\351\377\013\000\n\000\356\377\364\377\371\377\364\377\004\000\377\377\363\377\372\377\374\377\371\377\010\000\n\000\367\377\013\000\371\377\374\377\365\377\006\000\001\000\374\377\025\000\373\377\t\000\004\000\362\377\360\377\002\000\376\377\004\000\377\377\013\000\350\377\000\000\370\377\004\000\006\000\n\000\374\377\002\000\007\000\000\000\002\000\007\000\361\377\363\377\355\377\t\000\017\000\371\377\023\000\006\000\007\000\001\000\360\377\375\377\373\377\372\377\377\377\372\377\014\000\375\377\375\377\002\000\364\377\362\377\001\000\363\377\371\377\350\377\377\377\003\000\376\377\016\000\354\377\362\377\356\377\n\000\016\000\371\377\374\377\006\000\016\000\t\000\347\377\376\377"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 5
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\000\000\021\000\010\000\344\377\365\377\374\377\t\000\372\377\367\377\362\377\010\000\376\377\r\000\002\000\014\000\356\377\005\000\365\377\000\000\013\000\006\000\365\377\001\000\r\000\006\000\033\000\373\377\351\377\r\000\001\000\373\377\005\000\006\000\001\000\361\377\375\377\362\377\005\000\014\000\002\000\002\000\004\000\357\377\363\377\370\377\353\377\351\377\356\377\353\377\005\000\t\000\376\377\016\000\351\377\004\000\006\000\027\000\021\000\020\000\000\000\004\000\007\000\003\000\023\000\377\377\375\377\366\377\365\377\364\377\004\000\004\000\376\377\003\000\001\000\000\000\022\000\366\377\006\000\374\377\001\000\016\000\021\000\365\377\004\000\t\000\006\000\374\377\004\000\375\377\370\377\373\377\367\377\365\377\010\000\373\377\375\377"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 6
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\004\000\007\000\366\377\010\000\006\000\006\000\000\000\000\000\356\377\357\377\365\377\374\377\n\000\360\377\375\377\003\000\347\377\372\377\371\377\003\000\374\377\010\000\016\000\010\000\375\377\022\000\010\000\367\377\373\377\020\000\375\377\355\377\371\377\361\377\010\000\023\000\363\377\355\377\013\000\013\000\005\000\021\000\023\000\004\000\367\377\006\000\017\000\370\377\013\000\010\000\364\377\367\377\005\000\362\377\010\000\377\377\356\377\021\000\374\377\370\377\375\377\365\377\375\377\007\000\007\000\002\000\377\377\366\377\030\000\365\377\367\377\r\000\013\000\370\377\360\377\002\000\003\000\374\377\007\000\367\377\356\377\005\000\365\377\357\377\004\000\005\000\031\000\377\377\006\000\013\000\001\000\006\000\025\000\016\000\374\377\366\377"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 7
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\001\000\004\000\355\377\006\000\373\377\355\377\014\000\373\377\340\377\374\377\366\377\360\377\004\000\r\000\362\377\006\000\006\000\352\377\016\000\013\000\000\000\370\377\370\377\370\377\364\377\373\377\016\000\364\377\000\000\005\000\367\377\021\000\001\000\362\377\001\000\005\000\376\377\373\377\371\377\366\377\376\377\004\000\364\377\363\377\376\377\005\000\026\000\026\000\022\000 \000\372\377\362\377\376\377\377\377\372\377\003\000\005\000\374\377\377\377\363\377\373\377\033\000$\000\014\000\006\000\000\000\367\377\007\000\016\000\363\377\370\377\t\000\006\000\370\377\026\000\344\377\r\000\035\000\003\000\371\377\364\377\005\000\357\377\364\377\003\000\363\377\354\377\370\377\367\377\007\000\014\000\032\000\013\000\366\377\355\377\014\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 8
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\013\000\000\000\006\000\n\000\005\000\016\000\373\377\r\000\006\000\350\377\007\000\357\377\372\377\376\377\375\377\357\377\010\000\372\377\016\000\377\377\376\377\370\377\001\000\014\000\377\377\006\000\375\377\356\377\365\377\005\000\367\377\005\000\370\377\366\377\356\377\005\000\005\000\n\000\374\377\000\000\002\000\000\000\364\377\371\377\377\377\365\377\010\000\n\000\372\377\000\000\375\377\372\377\005\000\365\377\005\000\361\377\014\000\360\377\354\377\371\377\004\000\t\000\013\000\006\000\364\377\374\377\364\377\374\377\376\377\024\000\017\000\375\377\370\377\022\000\352\377\372\377\356\377\352\377\366\377\362\377\375\377\362\377\005\000\006\000\366\377\373\377\003\000\006\000\361\377\000\000\002\000\366\377\364\377\356\377\003\000\355\377"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 9
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\004\000\371\377\364\377\003\000\375\377\366\377\021\000\006\000\361\377\020\000\004\000\006\000\005\000\367\377\000\000\004\000\352\377\005\000\376\377\000\000\016\000\027\000\366\377\005\000\r\000\370\377\023\000\005\000\006\000\t\000\373\377\005\000\377\377\001\000\013\000\005\000\022\000\007\000\004\000\024\000\002\000\363\377\007\000\371\377\013\000\000\000\374\377\375\377\006\000\027\000\377\377\371\377\363\377\370\377\025\000\370\377\371\377\370\377\365\377\005\000\366\377\377\377\374\377\005\000\000\000\373\377\t\000\377\377\004\000\376\377\376\377\374\377\001\000\374\377\373\377\376\377\375\377\366\377\t\000\005\000\363\377\013\000\013\000\007\000\004\000\020\000\030\000\001\000\375\377\006\000\367\377\370\377\004\000\372\377\374\377\017\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 10
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\006\000\376\377\370\377\376\377\356\377\003\000\034\000\006\000\374\377\357\377\366\377\362\377\016\000\014\000\365\377\355\377\013\000\363\377\001\000\005\000\356\377\014\000\022\000\376\377\372\377\362\377\375\377\377\377\361\377\366\377\026\000\031\000\002\000\370\377\374\377\354\377\365\377\374\377\354\377\003\000\377\377\002\000\367\377\374\377\357\377\357\377\377\377\002\000\367\377\375\377\t\000\000\000\354\377\n\000\020\000\366\377\363\377\351\377\376\377\375\377\021\000\020\000\007\000\376\377\006\000\375\377\005\000\364\377\377\377\370\377\010\000\371\377\002\000\374\377\017\000\370\377\366\377\372\377\377\377\017\000\367\377\020\000\020\000\367\377\373\377\004\000\345\377\374\377\007\000\027\000\375\377\377\377\364\377\003\000\034\000\002\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 11
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\t\000\375\377\356\377\352\377\371\377\367\377\371\377\367\377\372\377\375\377\002\000\003\000\000\000\364\377\375\377\016\000\367\377\006\000\013\000\366\377\000\000\020\000\020\000\005\000\375\377\364\377\001\000\020\000\034\000\t\000\374\377\005\000\002\000\004\000\363\377\024\000\001\000\377\377\373\377\362\377\366\377\376\377\375\377\014\000\014\000\374\377\000\000\n\000\006\000\002\000\377\377\363\377\022\000\010\000\010\000\t\000\360\377\014\000\365\377\n\000\005\000\351\377\367\377\007\000\006\000\371\377\000\000\004\000\373\377\372\377\020\000\003\000\361\377\000\000\374\377\013\000\010\000\376\377\373\377\374\377\002\000\002\000\002\000\371\377\352\377\356\377\n\000\367\377\355\377\354\377\377\377\010\000\372\377\373\377\025\000\021\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 12
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\366\377\006\000\362\377\364\377\016\000\001\000\352\377\377\377\362\377\n\000\024\000\n\000\364\377\007\000\376\377\377\377\007\000\360\377\014\000\031\000\366\377\375\377\373\377\355\377\n\000\016\000\360\377\350\377\016\000\371\377\013\000\007\000\001\000\010\000\010\000\356\377\355\377\375\377\370\377\374\377\373\377\365\377\377\377\004\000\370\377\007\000\007\000\354\377\374\377\372\377\364\377\021\000\t\000\003\000\373\377\373\377\032\000\004\000\014\000\353\377\376\377\005\000\344\377\003\000\r\000\010\000\347\377\350\377\016\000\010\000\365\377\360\377\377\377\n\000\022\000\377\377\375\377\n\000\003\000\370\377\026\000\374\377\n\000\010\000\365\377\007\000\002\000\014\000\031\000\003\000\021\000\014\000\371\377\350\377\003\000\365\377"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 13
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\372\377\010\000\371\377\375\377\364\377\366\377\340\377\000\000\373\377\352\377!\000\014\000\003\000\360\377\370\377\360\377\r\000\025\000\t\000\370\377\365\377\367\377\010\000\353\377\010\000\362\377\371\377\020\000\375\377\362\377\357\377\374\377\027\000\002\000\023\000\007\000\000\000\007\000\t\000\t\000\016\000#\000\006\000\007\000\364\377\360\377\004\000\020\000\363\377\022\000\375\377\001\000\373\377\352\377\002\000\366\377\001\000\014\000\001\000\371\377\372\377\377\377\374\377\000\000\375\377\001\000\362\377\357\377\375\377\352\377\377\377\001\000\376\377\013\000\004\000\373\377\361\377\332\377\372\377\366\377\005\000\375\377\365\377\020\000\363\377\r\000\373\377\023\000\000\000\007\000\021\000\016\000\373\377\007\000\002\000\370\377"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:03] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 14
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\373\377\367\377\375\377\364\377\003\000\367\377\n\000\t\000\353\377\347\377\373\377\022\000\367\377\367\377\013\000\026\000!\000\025\000\020\000\364\377\353\377\007\000\361\377\372\377\024\000\010\000\373\377\006\000\360\377\365\377\376\377\362\377\371\377\363\377\360\377\362\377\000\000\007\000\n\000\004\000\010\000\022\000\020\000\013\000\004\000\377\377\365\377\352\377\013\000\372\377\014\000\373\377\371\377\365\377\363\377\007\000\365\377\013\000\t\000\366\377\375\377\005\000\375\377$\000\366\377\003\000\361\377\375\377\366\377\374\377\002\000\377\377\n\000\001\000\376\377\006\000\004\000\350\377\375\377\363\377\003\000\002\000\377\377\376\377\021\000\372\377\363\377\374\377\005\000\020\000\344\377\363\377\002\000\001\000\000\000\365\377"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 15
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\017\000\030\000\021\000\371\377\335\377\r\000\370\377\374\377\372\377\367\377\010\000\013\000\007\000\360\377\371\377\020\000\t\000\002\000\374\377\010\000\356\377\001\000\006\000\005\000\013\000\373\377\372\377\002\000\367\377\n\000\037\000\006\000\014\000\362\377\363\377\373\377\r\000\030\000\013\000\357\377\014\000\014\000\365\377\365\377\353\377\013\000\005\000\n\000\t\000\t\000\006\000\002\000\374\377\001\000\376\377\t\000\367\377\377\377\365\377\353\377\371\377\370\377\375\377\002\000\025\000\365\377\n\000\362\377\017\000\375\377\000\000\000\000\005\000\370\377\007\000\376\377\375\377\377\377\006\000\373\377\373\377\001\000\002\000\t\000\r\000\t\000\013\000\366\377\374\377\013\000\373\377\001\000\n\000\r\000\000\000\003\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 16
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\002\000\n\000\367\377\005\000\n\000\373\377\361\377\003\000\020\000\376\377\000\000\r\000\t\000\013\000\005\000\364\377\020\000\r\000\360\377\356\377\354\377\013\000\027\000\363\377\363\377\374\377\372\377\366\377\010\000\007\000\344\377\002\000\374\377\004\000\355\377\023\000\371\377\370\377\025\000\023\000\363\377\010\000\020\000\014\000\371\377\022\000\001\000\003\000\t\000\372\377\375\377\n\000\375\377\372\377\013\000\373\377\001\000\367\377\374\377\002\000\t\000\000\000\003\000\347\377\363\377\366\377\361\377\371\377\010\000\r\000\374\377\363\377\372\377\372\377\366\377\033\000\377\377\001\000\377\377\373\377\010\000\032\000\031\000\020\000\363\377\016\000\375\377\013\000\376\377\373\377\356\377\007\000\002\000\013\000\004\000\000\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 17
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\377\377\373\377\350\377\347\377\004\000\362\377\374\377\373\377\362\377\365\377\370\377\377\377\373\377\n\000\367\377\373\377\000\000\n\000\002\000\010\000\370\377\001\000\023\000\374\377\006\000\005\000\362\377\377\377\375\377\362\377\001\000\036\000\356\377\013\000 \000\367\377\371\377\003\000\001\000\357\377\362\377\377\377\004\000\377\377\t\000\007\000\005\000\371\377\010\000\374\377\344\377\016\000\014\000\r\000\006\000\357\377\000\000\002\000\371\377\005\000\010\000\372\377\000\000\365\377\367\377\001\000\002\000\376\377\004\000\010\000\366\377\016\000\006\000\000\000\025\000\023\000\355\377\004\000\022\000\005\000\374\377\000\000\003\000\362\377\005\000\r\000\000\000\372\377\t\000\370\377\371\377\005\000\016\000\376\377\366\377\003\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 18
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\363\377\001\000\371\377\001\000\000\000\371\377\363\377\010\000\013\000\013\000\371\377\370\377\372\377\020\000\005\000\364\377\377\377\376\377\360\377\374\377\013\000\376\377\375\377\020\000\373\377\361\377\366\377\000\000\010\000\002\000\003\000\372\377\n\000\360\377\000\000\000\000\375\377\003\000\020\000\n\000\010\000\371\377\005\000\377\377\375\377\024\000\361\377\370\377\361\377\361\377\n\000\377\377\372\377\n\000\007\000\020\000\014\000\365\377\377\377\367\377\004\000\010\000\355\377\371\377\n\000\356\377\010\000\363\377\021\000\366\377\375\377\367\377\363\377\023\000\002\000\025\000\t\000\371\377\026\000\350\377\005\000\375\377\372\377\365\377\347\377\027\000\005\000\376\377\034\000\001\000\366\377\000\000\001\000\004\000\366\377\010\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 19
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\363\377\016\000\010\000\006\000\000\000\366\377\022\000\354\377\331\377\000\000\014\000\375\377\372\377\357\377\372\377\377\377\001\000\375\377\366\377\355\377\363\377\370\377\016\000\376\377\372\377\363\377\366\377\006\000\006\000\021\000\361\377\360\377\r\000\000\000\374\377\371\377\001\000\023\000\000\000\351\377\345\377\362\377\364\377\003\000\374\377\376\377\006\000\364\377\364\377\360\377\355\377\371\377\007\000\372\377\371\377\357\377\000\000\362\377\013\000\365\377\000\000\r\000\005\000\003\000\375\377\004\000\001\000\374\377\373\377\376\377\367\377\005\000\365\377\r\000\376\377\366\377\360\377\364\377\375\377\367\377\366\377\002\000\367\377\356\377\017\000\006\000\374\377\016\000\361\377\363\377\022\000\026\000\370\377\005\000\004\000\010\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 20
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\371\377\375\377\005\000\362\377\373\377\010\000\002\000\000\000\001\000\376\377\372\377\000\000\n\000\365\377\366\377\022\000\372\377\002\000\006\000\023\000\372\377\n\000\367\377\366\377\t\000\005\000\373\377\003\000\001\000\372\377\n\000\001\000\365\377\013\000\372\377\370\377&\000\345\377\366\377\366\377\353\377\n\000\r\000\375\377\024\000\t\000\013\000\365\377\356\377\365\377\013\000\355\377\375\377\006\000\001\000\005\000\t\000\373\377\000\000\376\377\363\377\020\000\000\000\n\000\370\377\376\377\003\000\020\000\375\377\370\377\375\377\370\377\004\000&\000\007\000\356\377\364\377\361\377\337\377\370\377\001\000\371\377\370\377\374\377\372\377\003\000\014\000\367\377\376\377\t\000\373\377\371\377\371\377\364\377\007\000\020\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 21
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\020\000\373\377\363\377\372\377\347\377\365\377\010\000\007\000\t\000\021\000\376\377\370\377\372\377\370\377\331\377\372\377\371\377\375\377\374\377\362\377\377\377\004\000\033\000\t\000\000\000\367\377\013\000\001\000\365\377\376\377\357\377\003\000\020\000\003\000\004\000\002\000\017\000\003\000\355\377\373\377\n\000\373\377\374\377\376\377\006\000\377\377\020\000\017\000\371\377\376\377\372\377\001\000\366\377\372\377\374\377\363\377\005\000\010\000\014\000\020\000\004\000\005\000\024\000\374\377\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 22
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 23
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 24
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 25
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 26
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 27
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 28
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 29
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 30
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 31
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 32
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 33
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 34
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 35
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 36
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 37
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 38
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 39
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 40
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 41
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 214 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 42
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000\013\000\014\000\372\377\013\000\r\000\366\377\003\000\374\377\004\000\000\000\001\000\030\000\357\377\355\377\014\000\026\000\003\000\376\377\376\377\014\000\003\000\014\000\374\377\361\377\005\000\t\000\372\377\372\377\003\000\001\000\016\000\022\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] RX | notify | send_measurement
+  Length: 150 bytes
+  Key fields:
+    measurement_count: 1
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 8
+      current_fragment: 43
+      total_fragments: 43
+    }
+    send_measurement {
+      measurement_data {
+        data {
+          data_bytes: "\016\000\377\377\024\000\364\377\000\000\004\000\372\377\017\000\024\000\346\377\006\000\375\377\370\377\005\000\353\377\024\000\005\000\336\377\374\377\003\000\001\000\000\000\371\377\021\000\006\000\361\377\372\377\001\000\t\000\027\000\007\000\364\377\355\377\000\000\006\000\014\000\006\000\t\000\r\000\372\377\370\377\352\377\352\377\006\000\003\000\367\377\374\377\357\377\000\000\366\377\000\000\000\000\370\377\374\377\000\000\026\000\002\000\022\000\002\000\364\377\003\000\374\377\370\377\010\000"
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] TX | write | command
+  Length: 14 bytes
+  Key fields:
+    command_type: 1
+  Hex:
+    0A 08 08 01 10 09 20 01 28 01 72 02 08 01
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 9
+      current_fragment: 1
+      total_fragments: 1
+    }
+    command {
+      command: CommandTypeCloseSession
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 15:15:04] EVENT | disconnect_done
+--------------------------------------------------------------------------------
+
+================================================================================
+SESSION ENDED: 2026-03-03 15:15:04
+================================================================================

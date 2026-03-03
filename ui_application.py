@@ -52,7 +52,7 @@ def create_app_class(BleCycleWorker, TileState):
         def __init__(self, root: tk.Tk) -> None:
             self.root = root
             self._tk_root = root
-            self.root.title("SimGW v2 BLE Loop")
+            self.root.title("SimGW ELO SKF")
             self.root.geometry("1000x800")
             self.root.configure(bg="#0f1115")
     
@@ -122,6 +122,7 @@ def create_app_class(BleCycleWorker, TileState):
             self.record_sessions_var = tk.BooleanVar(value=True)
             self.session_root_var = tk.StringVar(value="sessions")
             self.mtu_var = tk.StringVar(value="247")
+            self.twf_type_var = tk.StringVar(value="5")  # Default: Acceleration TWF
 
             self._apply_theme()
             self._build_ui()
@@ -141,6 +142,25 @@ def create_app_class(BleCycleWorker, TileState):
             style.configure("TButton", background=self.colors["panel"], foreground=self.colors["text"], padding=(10, 6))
             style.configure("Accent.TButton", background=self.colors["accent"], foreground="#0b0f14", padding=(10, 6))
             style.map("Accent.TButton", background=[("active", self.colors["accent_alt"])])
+
+            # Notebook (tabs) styling - modern dark theme with equal width tabs
+            style.configure("TNotebook", 
+                background=self.colors["bg"],
+                borderwidth=0,
+                tabmargins=0)
+            
+            style.configure("TNotebook.Tab",
+                background=self.colors["panel_alt"],
+                foreground=self.colors["muted"],
+                padding=(50, 12),
+                borderwidth=0,
+                focuscolor="none",
+                font=("Segoe UI", 10, "bold"))
+            
+            style.map("TNotebook.Tab",
+                background=[("selected", self.colors["panel"]), ("active", self.colors["panel_alt"])],
+                foreground=[("selected", self.colors["accent"]), ("active", self.colors["text"])],
+                padding=[("selected", (50, 12))])  # Expand selected tab slightly
 
             # Treeview dark theme
             style.configure("Treeview",
@@ -229,7 +249,6 @@ def create_app_class(BleCycleWorker, TileState):
                 if getattr(self, "demo_plot_fig", None) is not None:
                     ax = self.demo_plot_fig.axes[0] if self.demo_plot_fig.axes else self.demo_plot_fig.add_subplot(111)
                     ax.clear()
-                    ax.set_title("Waveform (latest)")
                     ax.set_xlabel("Sample")
                     ax.set_ylabel("Value")
                     ax.grid(True, alpha=0.2)
@@ -254,7 +273,7 @@ def create_app_class(BleCycleWorker, TileState):
         def _ui_build_run_header_card(self, parent: tk.Widget) -> tuple:
             """Build the standard header (used in Demo and Expert) with Start Auto / Stop and run-state labels."""
             card = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            card.pack(fill=tk.X, padx=16, pady=(16, 12))
+            card.pack(fill=tk.X, padx=0, pady=(16, 12))
             inner = tk.Frame(card, bg=self.colors["panel"])
             inner.pack(fill=tk.X, padx=14, pady=12)
     
@@ -359,7 +378,7 @@ def create_app_class(BleCycleWorker, TileState):
     
             self.demo_summary = tk.Text(
                 sum_in,
-                height=10,
+                height=13,
                 wrap=tk.WORD,
                 bg=self.colors["panel"],
                 fg=self.colors["text"],
@@ -394,7 +413,7 @@ def create_app_class(BleCycleWorker, TileState):
             self.demo_plot_label.pack(side=tk.LEFT, padx=(10, 0))
     
             plot_area = tk.Frame(plot_in, bg=self.colors["panel"])
-            plot_area.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+            plot_area.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
     
             if Figure is None or FigureCanvasTkAgg is None:
                 tk.Label(
@@ -410,9 +429,9 @@ def create_app_class(BleCycleWorker, TileState):
                 self.demo_plot_canvas = None
                 self.demo_plot_widget = None
             else:
-                self.demo_plot_fig = Figure(figsize=(7.5, 2.6), dpi=100)
+                self.demo_plot_fig = Figure(figsize=(7.5, 2.3), dpi=100)
+                self.demo_plot_fig.subplots_adjust(bottom=0.15, top=0.95)
                 ax = self.demo_plot_fig.add_subplot(111)
-                ax.set_title("Waveform (latest)")
                 ax.set_xlabel("Sample")
                 ax.set_ylabel("Value")
                 ax.grid(True, alpha=0.2)
@@ -514,7 +533,6 @@ def create_app_class(BleCycleWorker, TileState):
             ax = self.demo_plot_fig.axes[0] if self.demo_plot_fig.axes else self.demo_plot_fig.add_subplot(111)
             ax.clear()
             ax.plot(y)
-            ax.set_title("Waveform (latest)")
             ax.set_xlabel("Sample")
             ax.set_ylabel("Amplitude (int16)")
             ax.grid(True, alpha=0.2)
@@ -646,6 +664,17 @@ def create_app_class(BleCycleWorker, TileState):
             tk.Label(inner, text="MTU", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=2, column=0, sticky="w", pady=(10, 0))
             ttk.Entry(inner, textvariable=self.mtu_var, width=10).grid(row=2, column=1, sticky="w", pady=(10, 0))
 
+            # TWF Type selector
+            tk.Label(inner, text="Waveform type", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=3, column=0, sticky="w", pady=(10, 0))
+            twf_combo = ttk.Combobox(inner, textvariable=self.twf_type_var, width=24, state="readonly")
+            twf_combo['values'] = (
+                f"{MEASUREMENT_TYPE_ACCELERATION_TWF} - Acceleration TWF",
+                f"{MEASUREMENT_TYPE_VELOCITY_TWF} - Velocity TWF",
+                f"{MEASUREMENT_TYPE_ENVELOPER3_TWF} - Enveloper3 TWF"
+            )
+            twf_combo.current(0)  # Default to Acceleration
+            twf_combo.grid(row=3, column=1, columnspan=2, sticky="w", pady=(10, 0))
+
             util = tk.Frame(body, bg=self.colors["bg"])
             util.pack(fill=tk.X, pady=(12, 0))
             ttk.Button(util, text="Clear Logs", command=self._clear_tiles).pack(side=tk.LEFT)
@@ -666,7 +695,7 @@ def create_app_class(BleCycleWorker, TileState):
                 pass
 
             # Read current filters (use fixed 5s timeout)
-            addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, svc_contains, mfg_id_hex, mfg_data_hex = self._read_runtime_params()
+            addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, svc_contains, mfg_id_hex, mfg_data_hex, _twf_type = self._read_runtime_params()
             timeout_s = 5.0  # Fixed 5 second timeout
 
             def worker():
@@ -709,7 +738,7 @@ def create_app_class(BleCycleWorker, TileState):
             now_ms = int(time.time() * 1000)
     
             # apply filters consistently with the rest of the app
-            addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, svc_contains, mfg_id_hex, mfg_data_hex = self._read_runtime_params()
+            addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, svc_contains, mfg_id_hex, mfg_data_hex, _twf_type = self._read_runtime_params()
     
             added = 0
             updated = 0
@@ -1101,7 +1130,43 @@ def create_app_class(BleCycleWorker, TileState):
             """
             if self.demo_summary is None:
                 return
+
+            # Check if rx_text contains the new formatted view
+            if rx_text and ("=== OVERALL MEASUREMENTS ===" in rx_text or "=== SESSION ACCEPTED ===" in rx_text):
+                # Use the new formatted view directly
+                # Remove TYPE and HEX headers
+                lines_raw = rx_text.split('\n')
+                filtered_lines = []
+                skip_next = False
+                for line in lines_raw:
+                    if line.startswith('TYPE:') or line.startswith('HEX:'):
+                        skip_next = True
+                        continue
+                    if skip_next and line.strip() == '':
+                        skip_next = False
+                        continue
+                    filtered_lines.append(line)
+                
+                display_text = '\n'.join(filtered_lines).strip()
+                
+                # Add header with timestamp
+                now_s = time.strftime("%H:%M:%S")
+                header = f"Last update: {now_s}\n\n"
+                
+                self.demo_summary.configure(state=tk.NORMAL)
+                self.demo_summary.delete("1.0", tk.END)
+                
+                # Use monospaced font
+                try:
+                    self.demo_summary.configure(font=("Consolas", 10))
+                except Exception:
+                    pass
+                
+                self.demo_summary.insert(tk.END, header + display_text + "\n")
+                self.demo_summary.configure(state=tk.DISABLED)
+                return
     
+            # Legacy path: use overall_values
             items = overall_values or []
     
             # Header (use local time for human feedback)
@@ -1374,7 +1439,13 @@ def create_app_class(BleCycleWorker, TileState):
             service_uuid_contains = self.adv_service_uuid_contains_var.get().strip()
             mfg_id_hex = self.adv_mfg_id_hex_var.get().strip()
             mfg_data_hex_contains = self.adv_mfg_data_hex_contains_var.get().strip()
-            return address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains
+            # Parse TWF type (extract first number from "5 - Acceleration TWF" format)
+            twf_type_str = self.twf_type_var.get().strip()
+            try:
+                twf_type = int(twf_type_str.split()[0]) if twf_type_str else MEASUREMENT_TYPE_ACCELERATION_TWF
+            except (ValueError, IndexError):
+                twf_type = MEASUREMENT_TYPE_ACCELERATION_TWF
+            return address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type
     
         def _safe_destroy(self, widget) -> None:
             if widget is None:
@@ -1453,11 +1524,11 @@ def create_app_class(BleCycleWorker, TileState):
             return tile_id
     
         def _start_worker_cycle(self, tile_id: int, action: str = None) -> None:
-            address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains = self._read_runtime_params()
+            address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type = self._read_runtime_params()
             if action is None:
-                self.worker.run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains)
+                self.worker.run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type)
             else:
-                self.worker.run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains)
+                self.worker.run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type)
     
         def _on_start(self) -> None:
             self._reset_auto_state()
@@ -1601,9 +1672,16 @@ def create_app_class(BleCycleWorker, TileState):
             export_label = tk.Label(body, text="Export: •", bg=self.colors["panel"], fg=self.colors["muted"], justify="left", wraplength=720)
             export_label.pack(anchor="w", pady=(4, 0))
     
-            plot_btn = ttk.Button(body, text="Plot export", command=lambda tid=tile_id: self._plot_tile_waveform(tid))
-            plot_btn.pack(anchor="w", pady=(6, 0))
-    
+            # Buttons row
+            btn_row = tk.Frame(body, bg=self.colors["panel"])
+            btn_row.pack(anchor="w", pady=(6, 0), fill=tk.X)
+            
+            plot_btn = ttk.Button(btn_row, text="Plot Waveform", width=18, command=lambda tid=tile_id: self._plot_tile_waveform(tid))
+            plot_btn.pack(side=tk.LEFT, padx=(0, 6))
+            
+            details_btn = ttk.Button(btn_row, text="View Details", width=18, command=lambda tid=tile_id: self._view_session_details(tid))
+            details_btn.pack(side=tk.LEFT)
+
             self.tiles[tile_id] = {
                 "card": card,
                 "status": status_label,
@@ -1615,6 +1693,7 @@ def create_app_class(BleCycleWorker, TileState):
                 "checklist": checklist_labels,
                 "checklist_titles": checklist_titles,
                 "plot_btn": plot_btn,
+                "details_btn": details_btn,
             }
     
     
@@ -1637,6 +1716,109 @@ def create_app_class(BleCycleWorker, TileState):
                 title="Latest waveform export",
                 empty_msg="No waveform export available yet.",
             )
+
+        def _view_session_details(self, tile_id: int) -> None:
+            """Open a popup window showing formatted session details from events.txt."""
+            # Get tile state to find session directory
+            tile_state = self.tile_state.get(tile_id)
+            if not tile_state or not tile_state.session_dir:
+                messagebox.showinfo("Session Details", f"No session data available for tile {tile_id}.")
+                return
+            
+            events_file = os.path.join(tile_state.session_dir, "events.txt")
+            if not os.path.exists(events_file):
+                messagebox.showinfo("Session Details", f"Session log file not found:\n{events_file}")
+                return
+            
+            # Read the file contents
+            try:
+                with open(events_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to read session log:\n{e}")
+                return
+            
+            # Create popup window
+            popup = tk.Toplevel(self.root)
+            popup.title(f"Session Details - Tile {tile_id}")
+            popup.geometry("900x700")
+            popup.configure(bg=self.colors["bg"])
+            
+            # Header with session info
+            header = tk.Frame(popup, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+            header.pack(fill=tk.X, padx=10, pady=10)
+            header_in = tk.Frame(header, bg=self.colors["panel"])
+            header_in.pack(fill=tk.X, padx=12, pady=10)
+            
+            tk.Label(
+                header_in,
+                text=f"📋 Session Details - Tile {tile_id}",
+                bg=self.colors["panel"],
+                fg=self.colors["text"],
+                font=("Segoe UI", 12, "bold")
+            ).pack(side=tk.LEFT)
+            
+            session_name = os.path.basename(tile_state.session_dir)
+            tk.Label(
+                header_in,
+                text=f"Session: {session_name}",
+                bg=self.colors["panel"],
+                fg=self.colors["muted"],
+                font=("Segoe UI", 9)
+            ).pack(side=tk.LEFT, padx=(20, 0))
+            
+            # Text widget with scrollbar
+            text_frame = tk.Frame(popup, bg=self.colors["bg"])
+            text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+            
+            scrollbar = tk.Scrollbar(text_frame)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            text_widget = tk.Text(
+                text_frame,
+                wrap=tk.NONE,
+                bg=self.colors["panel"],
+                fg=self.colors["text"],
+                font=("Consolas", 9),
+                yscrollcommand=scrollbar.set
+            )
+            text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.config(command=text_widget.yview)
+            
+            # Insert content
+            text_widget.insert("1.0", content)
+            text_widget.configure(state=tk.DISABLED)
+            
+            # Bottom buttons
+            btn_frame = tk.Frame(popup, bg=self.colors["bg"])
+            btn_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+            
+            ttk.Button(
+                btn_frame,
+                text="Copy to Clipboard",
+                command=lambda: self._copy_to_clipboard(content, popup)
+            ).pack(side=tk.LEFT, padx=(0, 6))
+            
+            ttk.Button(
+                btn_frame,
+                text="Open in Notepad",
+                command=lambda: os.startfile(events_file)
+            ).pack(side=tk.LEFT, padx=(0, 6))
+            
+            ttk.Button(
+                btn_frame,
+                text="Close",
+                command=popup.destroy
+            ).pack(side=tk.RIGHT)
+        
+        def _copy_to_clipboard(self, text: str, parent_window: tk.Toplevel) -> None:
+            """Copy text to clipboard and show confirmation."""
+            try:
+                parent_window.clipboard_clear()
+                parent_window.clipboard_append(text)
+                messagebox.showinfo("Copied", "Session details copied to clipboard!", parent=parent_window)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to copy to clipboard:\n{e}", parent=parent_window)
     
     
         def _plot_waveform_from_export(self, export_info: dict, title: str = "Waveform") -> None:
@@ -1802,8 +1984,28 @@ def create_app_class(BleCycleWorker, TileState):
     
             # Always refresh compact summary when new data arrives
             try:
-                ov_txt = self._format_overalls_compact(st.overall_values, max_lines=8)
-                tile["overall"].configure(text=ov_txt)
+                # If rx_text contains the new formatted view, use it directly
+                if st.rx_text and ("=== OVERALL MEASUREMENTS ===" in st.rx_text or "=== SESSION ACCEPTED ===" in st.rx_text):
+                    # Extract just the formatted section (without TYPE/HEX headers)
+                    display_text = st.rx_text
+                    # Remove TYPE and HEX lines if present
+                    lines = display_text.split('\n')
+                    filtered_lines = []
+                    skip_next = False
+                    for line in lines:
+                        if line.startswith('TYPE:') or line.startswith('HEX:'):
+                            skip_next = True
+                            continue
+                        if skip_next and line.strip() == '':
+                            skip_next = False
+                            continue
+                        filtered_lines.append(line)
+                    display_text = '\n'.join(filtered_lines).strip()
+                    tile["overall"].configure(text=display_text)
+                else:
+                    # Use legacy formatted overall_values
+                    ov_txt = self._format_overalls_compact(st.overall_values, max_lines=8)
+                    tile["overall"].configure(text=ov_txt)
             except Exception:
                 pass
             try:
@@ -1859,7 +2061,6 @@ def create_app_class(BleCycleWorker, TileState):
                         if self.demo_plot_canvas is not None and self.demo_plot_fig is not None:
                             ax = self.demo_plot_fig.axes[0] if self.demo_plot_fig.axes else self.demo_plot_fig.add_subplot(111)
                             ax.clear()
-                            ax.set_title("Waveform (latest)")
                             ax.set_xlabel("Sample")
                             ax.set_ylabel("Amplitude (int16)")
                             ax.grid(True, alpha=0.2)
@@ -1938,7 +2139,7 @@ def create_app_class(BleCycleWorker, TileState):
             except Exception:
                 pass
     
-            address_prefix, _mtu, scan_timeout, _rx_timeout, _record_sessions, _session_root, name_contains, svc_contains, mfg_id_hex, mfg_data_hex = self._read_runtime_params()
+            address_prefix, _mtu, scan_timeout, _rx_timeout, _record_sessions, _session_root, name_contains, svc_contains, mfg_id_hex, mfg_data_hex, _twf_type = self._read_runtime_params()
     
             # Normalize filters
             addr_prefix = (address_prefix or "").strip().upper()

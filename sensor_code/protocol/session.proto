@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package SKF.Session;
+
+enum HardwareType {
+    HardwareTypeUnknown = 0;
+    HardwareTypeCmwa6120_std = 1;
+    HardwareTypeCmwa6120_atex = 2;
+    HardwareTypeCmwa6420_std = 3;
+    HardwareTypeCmwa6420_atex = 4;
+}
+
+/* GW send OpenSession, sensor answer with AcceptSession */
+message OpenSession {
+    uint64 current_sync_time = 1; /* Unix time (seconds) */
+}
+
+message SessionInfo_ble {
+    sint32 rssi = 1;
+}
+
+message SessionInfo_mira {
+    fixed64 parent_address = 1;
+    uint32 parent_link_metric = 2;
+}
+
+message SessionInfo {
+    oneof kind {
+        SessionInfo_ble session_info_ble= 1;
+        SessionInfo_mira session_info_mira = 2;
+    }
+}
+
+message AcceptSession {
+    uint32 virtual_id = 1;
+    HardwareType hardware_type = 2;
+    uint32 hw_version = 3;
+    bytes  serial = 4;
+    uint32 fw_version = 5;
+    uint32 fw_cache_version = 6;
+    uint32 config_hash = 7;
+    uint32 self_diag = 8;
+    uint32 battery_indicator = 9;
+    optional SessionInfo session_info= 10;
+}

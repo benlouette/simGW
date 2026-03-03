@@ -15,7 +15,8 @@ import os
 # DIRECTORY PATHS
 # ==============================================================================
 BASE_DIR = os.path.dirname(__file__)
-FROTO_DIR = os.path.join(BASE_DIR, "froto")
+FROTO_DIR = os.path.join(BASE_DIR, "froto")  # Legacy protocol (deprecated)
+PROTOCOL_DIR = os.path.join(BASE_DIR, "protocol")  # New simplified protocol
 CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
 
 # ==============================================================================
@@ -27,7 +28,7 @@ UI_COLORS = {
     "panel_alt": "#1f2430",
     "text": "#e6e6e6",
     "muted": "#8b93a1",
-    "accent": "#4361ee",
+    "accent": "#0F7FFF",
     "accent_alt": "#4cc9f0",
     "ok": "#22c55e",
     "warn": "#f59e0b",
@@ -86,6 +87,30 @@ def _phase_rank(phase: str) -> int:
         return _PHASE_ORDER.index(phase)
     except ValueError:
         return -1
+
+# ==============================================================================
+# MEASUREMENT TYPE CONSTANTS (from protocol/measurement.proto)
+# ==============================================================================
+# Overall measurement types
+MEASUREMENT_TYPE_ACCELERATION_OVERALL = 1
+MEASUREMENT_TYPE_VELOCITY_OVERALL = 2
+MEASUREMENT_TYPE_ENVELOPER3_OVERALL = 3
+MEASUREMENT_TYPE_TEMPERATURE_OVERALL = 4
+
+# Time Waveform (TWF) measurement types
+MEASUREMENT_TYPE_ACCELERATION_TWF = 5
+MEASUREMENT_TYPE_VELOCITY_TWF = 6
+MEASUREMENT_TYPE_ENVELOPER3_TWF = 7
+
+# Default TWF type to request (sensor supports only ONE TWF per request)
+DEFAULT_TWF_TYPE = MEASUREMENT_TYPE_ACCELERATION_TWF
+
+# TWF type display names (for UI selector)
+TWF_TYPE_NAMES = {
+    MEASUREMENT_TYPE_ACCELERATION_TWF: "Acceleration TWF",
+    MEASUREMENT_TYPE_VELOCITY_TWF: "Velocity TWF", 
+    MEASUREMENT_TYPE_ENVELOPER3_TWF: "Enveloper3 TWF",
+}
 
 # ==============================================================================
 # MANUAL ACTIONS (for Expert tab)
