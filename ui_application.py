@@ -1,10 +1,22 @@
 """
-UI Application module for simGW - Tkinter GUI components.
+UI Application module for simGW - Main Tkinter GUI components.
 
-Contains the main SimGwV2App class with:
-- 4-tab interface (Demo/Expert/Devices/Settings)
-- BLE device management
-- Waveform plotting
+This module contains the SimGwV2App class with a 4-tab interface:
+- Demo Tab: User-friendly KPI display with timeline and waveform plot
+- Expert Tab: Advanced tile-based monitoring with detailed hex dumps
+- Devices Tab: BLE device scanner with advertising details
+- Settings Tab: Configuration parameters
+
+Architecture:
+- Uses factory pattern (create_app_class) for dependency injection
+- Integrates with BleCycleWorker for async BLE operations
+- Centralized configuration in config.py (colors, phases, constants)
+- Modular data handling via data_exporters and protobuf_formatters
+
+Performance optimizations:
+- Thread leak prevention in device scanning
+- Fixed 5-second scan timeout
+- Monotonic phase progression per tile
 """
 import asyncio
 import os
@@ -28,7 +40,7 @@ except Exception:
     Figure = None
     FigureCanvasTkAgg = None
 
-from config import AUTO_RESTART_DELAY_MS, UI_POLL_INTERVAL_MS, CHECKLIST_ITEMS, CHECKLIST_STATE_MAP, MANUAL_ACTIONS
+from config import AUTO_RESTART_DELAY_MS, UI_POLL_INTERVAL_MS, CHECKLIST_ITEMS, CHECKLIST_STATE_MAP, MANUAL_ACTIONS, UI_COLORS
 from data_exporters import WaveformParser
 WaveformExportTools = WaveformParser
 
@@ -116,19 +128,8 @@ def create_app_class(BleCycleWorker, TileState):
             self._poll_queue()
     
         def _apply_theme(self) -> None:
-            self.colors = {
-                "bg": "#0f1115",
-                "panel": "#171a21",
-                "panel_alt": "#1f2430",
-                "text": "#e6e6e6",
-                "muted": "#8b93a1",
-                "accent": "#4361ee",
-                "accent_alt": "#4cc9f0",
-                "ok": "#22c55e",
-                "warn": "#f59e0b",
-                "bad": "#ef4444",
-                "border": "#2a2f3a",
-            }
+            # Use centralized color palette from config
+            self.colors = UI_COLORS
     
             style = ttk.Style(self.root)
             style.theme_use("clam")

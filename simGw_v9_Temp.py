@@ -1,9 +1,6 @@
 ﻿import asyncio
-import csv
 import os
 import sys
-import re
-import struct
 import threading
 import time
 import tkinter as tk
@@ -12,7 +9,6 @@ from queue import Queue, Empty
 from tkinter import ttk, messagebox
 from typing import Dict, Optional
 
-from google.protobuf import text_format
 from bleak import BleakClient, BleakScanner
 
 # Refactored: centralized modules

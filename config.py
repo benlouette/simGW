@@ -7,6 +7,7 @@ Contains:
 - Manual actions list
 - Checklist items
 - Timing constants
+- UI color palette
 """
 import os
 
@@ -16,6 +17,23 @@ import os
 BASE_DIR = os.path.dirname(__file__)
 FROTO_DIR = os.path.join(BASE_DIR, "froto")
 CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
+
+# ==============================================================================
+# UI COLOR PALETTE (Dark theme)
+# ==============================================================================
+UI_COLORS = {
+    "bg": "#0f1115",
+    "panel": "#171a21",
+    "panel_alt": "#1f2430",
+    "text": "#e6e6e6",
+    "muted": "#8b93a1",
+    "accent": "#4361ee",
+    "accent_alt": "#4cc9f0",
+    "ok": "#22c55e",
+    "warn": "#f59e0b",
+    "bad": "#ef4444",
+    "border": "#2a2f3a",
+}
 
 # ==============================================================================
 # BLE UART SERVICE UUIDs (as byte arrays)
