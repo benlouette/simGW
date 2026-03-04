@@ -1,0 +1,167 @@
+================================================================================
+SESSION: sensor2_20260303_165230_overall
+STARTED: 2026-03-03 16:52:30
+================================================================================
+
+[2026-03-03 16:52:30] EVENT | manual_start:overall
+--------------------------------------------------------------------------------
+[2026-03-03 16:52:35] EVENT | connected:C4:BD:6A:01:02:03
+--------------------------------------------------------------------------------
+[2026-03-03 16:52:35] TX | write | open_session
+  Length: 18 bytes
+  Key fields:
+    sync_time: 1772553155
+  Hex:
+    0A 08 08 01 10 01 20 01 28 01 52 06 08 C3 87 9C CD 06
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 1
+      current_fragment: 1
+      total_fragments: 1
+    }
+    open_session {
+      current_sync_time: 1772553155
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 16:52:35] RX | notify | accept_session
+  Length: 42 bytes
+  Key fields:
+    virtual_id: 0
+    hw_type: 1
+    fw_version: 66051
+    serial: c4bd6a010203
+    battery: 95
+    config_hash: 4294967295
+  Hex:
+    0A 04 08 01 10 01 5A 22 10 01 18 05 22 06 C4 BD 6A 01 02 03 28 83 84 04 30 83 84 04 38 FF FF FF
+    FF 0F 48 5F 52 04 0A 02 08 77
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 1
+    }
+    accept_session {
+      hardware_type: HardwareTypeCmwa6120_std
+      hw_version: 5
+      serial: "\304\275j\001\002\003"
+      fw_version: 66051
+      fw_cache_version: 66051
+      config_hash: 4294967295
+      battery_indicator: 95
+      session_info {
+        session_info_ble {
+          rssi: -60
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 16:52:35] TX | write | measurement_request
+  Length: 28 bytes
+  Key fields:
+    requested_types: 4
+  Hex:
+    0A 08 08 01 10 02 20 01 28 01 62 10 0A 02 08 01 0A 02 08 02 0A 02 08 03 0A 02 08 04
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 2
+      current_fragment: 1
+      total_fragments: 1
+    }
+    measurement_request {
+      measurement {
+        measurement_type: MeasurementTypeAccelerationOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeVelocityOverall
+      }
+      measurement {
+        measurement_type: MeasurementTypeEnveloper3Overall
+      }
+      measurement {
+        measurement_type: MeasurementTypeTemperatureOverall
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 16:52:35] RX | notify | send_measurement
+  Length: 110 bytes
+  Key fields:
+    measurement_count: 4
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 2
+    }
+    send_measurement {
+      common_meta_data {
+        time: 11936128518282651045
+        config_hash: 2779096485
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeAccelerationOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 82
+            rms: 11
+            peak: 41
+            std: 11
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeVelocityOverall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 93
+            rms: 14
+            peak: 55
+            std: 14
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeEnveloper3Overall
+            duration: 159
+          }
+        }
+        data {
+          measurement_overall {
+            peak2peak: 36
+            rms: 18
+            peak: 21
+            std: 6
+            mean: 17
+          }
+        }
+      }
+      measurement_data {
+        metadata {
+          elo_metadata {
+            vibration_path: MeasurementTypeTemperatureOverall
+          }
+        }
+        data {
+          int32_data: 74
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-03 16:52:35] EVENT | disconnect_done
+--------------------------------------------------------------------------------
+
+================================================================================
+SESSION ENDED: 2026-03-03 16:52:35
+================================================================================

@@ -169,11 +169,19 @@ class BleCycleWorker:
 
     def run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
                 name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "", twf_type: int = None) -> None:
+        # Clear any previous cancelled state before starting
+        with self._cancel_lock:
+            self._cancel_all = False
+            self._cancel_tiles.discard(int(tile_id))
         self._call_soon(self._run_cycle_impl(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root,
                         name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type))
 
     def run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str, record_sessions: bool, session_root: str,
                 name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "", twf_type: int = None) -> None:
+        # Clear any previous cancelled state before starting
+        with self._cancel_lock:
+            self._cancel_all = False
+            self._cancel_tiles.discard(int(tile_id))
         self._call_soon(self._run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root,
                         name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type))
 
@@ -326,13 +334,6 @@ class BleCycleWorker:
         """Format session info and overall_values into readable text."""
         lines = []
         
-        # DEBUG: Print overall_values to see what we have
-        print(f"\nDEBUG _format_session_and_overall_text:")
-        print(f"  overall_values count: {len(overall_values) if overall_values else 0}")
-        if overall_values:
-            for i, item in enumerate(overall_values):
-                print(f"  [{i}] label='{item.get('label', '')}' value='{item.get('value', '')}' field_extracted='{item.get('label', '').split(' - ')[-1] if ' - ' in item.get('label', '') else item.get('label', '')}'")
-        
         # Format session info if available
         if session_info:
             accept_msg = session_info.get("accept_msg")
@@ -458,7 +459,7 @@ class BleCycleWorker:
         return exporter.export_waveform_capture(tile_id, payloads, parsed_msgs, self._hex_short)
 
     async def _run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str, record_sessions: bool, session_root: str,
-                            name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "") -> None:
+                            name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "", twf_type: int = None) -> None:
         """
         REFACTORED: Execute manual BLE action using centralized BleSessionHelpers.
         Reduced from ~400 lines to ~150 lines.
@@ -558,7 +559,7 @@ class BleCycleWorker:
             await helpers.start_notifications()
 
             # Execute action
-            if action in ("version", "config_hash", "metrics", "waveform", "close_session"):
+            if action in ("session_test", "overall", "acceleration_twf", "velocity_twf", "enveloper3_twf", "full_cycle"):
                 # New protocol: send OpenSession once and wait for AcceptSession
                 await helpers.send_open_session()
                 await asyncio.sleep(0.1)
@@ -569,6 +570,9 @@ class BleCycleWorker:
                             "status": f"Session accepted (FW: 0x{msg.accept_session.fw_version:X})",
                             "rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
                         })
+                        # Save session info for actions that need it
+                        accept_session_msg = msg.accept_session
+                        accept_session_payload = payload
                     else:
                         self._emit(tile_id, {"status": f"Unexpected response: {msg_type}"})
                 except asyncio.TimeoutError:
@@ -578,55 +582,7 @@ class BleCycleWorker:
             if action == "connect_test":
                 self.ui_queue.put(("tile_update", tile_id, {"status": "Connected (test OK)"}))
 
-            elif action == "discover_gatt":
-                try:
-                    services = client.services or await client.get_services()
-                except Exception:
-                    services = await client.get_services()
-                gatt_lines = [f"[SERVICE] {svc.uuid} ({getattr(svc, 'description', '')})" for svc in services]
-                for svc in services:
-                    for ch in getattr(svc, "characteristics", []):
-                        props = ",".join(getattr(ch, "properties", []) or [])
-                        gatt_lines.append(f"  [CHAR] {ch.uuid} props=[{props}]")
-                self.ui_queue.put(("tile_update", tile_id, {
-                    "status": "GATT discovered",
-                    "rx_text": "\n".join(gatt_lines) if gatt_lines else "(no services)",
-                }))
-
-            elif action == "notify_test":
-                self.ui_queue.put(("tile_update", tile_id, {"status": "Notify active for 2s (test)"}))
-                try:
-                    payload = await helpers.wait_next_rx(2.0)
-                    rx_type = helpers._pb_message_type(payload)
-                    self.ui_queue.put(("tile_update", tile_id, {
-                        "status": f"Notify RX {rx_type}",
-                        "rx_text": f"TYPE: {rx_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
-                    }))
-                except asyncio.TimeoutError:
-                    self.ui_queue.put(("tile_update", tile_id, {"status": "Notify test timeout (no unsolicited RX)"}))
-
-            elif action == "sync_time":
-                self.ui_queue.put(("tile_update", tile_id, {"status": "Time sync sent", "checklist": {"general_info_exchange": "done"}}))
-
-            elif action == "version":
-                # Version info already received in AcceptSession above
-                payload, msg, msg_type = msg.SerializeToString(), msg, msg_type
-                self.ui_queue.put(("tile_update", tile_id, {
-                    "status": f"RX {msg_type}",
-                    "checklist": {"general_info_exchange": "done"},
-                    "rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
-                }))
-
-            elif action == "config_hash":
-                # Config hash already received in AcceptSession above
-                payload, msg, msg_type = msg.SerializeToString(), msg, msg_type
-                self.ui_queue.put(("tile_update", tile_id, {
-                    "status": f"RX {msg_type}",
-                    "checklist": {"general_info_exchange": "done"},
-                    "rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
-                }))
-
-            elif action == "metrics":
+            elif action == "overall":
                 # Session already open, directly request metrics
                 await asyncio.sleep(0.1)
                 await helpers.send_metrics_selection(int(time.time() * 1000))
@@ -643,10 +599,25 @@ class BleCycleWorker:
                     "rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
                 }))
 
-            elif action == "waveform":
-                # Session already open, directly request waveform
+            elif action == "session_test":
+                # Just display session info (already received in AcceptSession above)
+                session_info = {"accept_msg": accept_session_msg, "payload": accept_session_payload}
+                rx_text = self._format_session_and_overall_text(session_info, [])
+                await helpers.send_close_session()
+                self.ui_queue.put(("tile_update", tile_id, {
+                    "status": "Session test OK",
+                    "checklist": {"general_info_exchange": "done", "close_session": "done"},
+                    "rx_text": rx_text,
+                }))
+
+            elif action in ("acceleration_twf", "velocity_twf", "enveloper3_twf"):
+                # Map action to TWF type
+                twf_map = {"acceleration_twf": 5, "velocity_twf": 6, "enveloper3_twf": 7}
+                req_twf_type = twf_map[action]
+                
+                # Request specific waveform type
                 await asyncio.sleep(0.1)
-                await helpers.send_vibration_selection(int(time.time() * 1000))
+                await helpers.send_vibration_selection(int(time.time() * 1000), twf_type=req_twf_type)
                 
                 # Collect waveform blocks
                 received, expected = 0, None
@@ -690,20 +661,98 @@ class BleCycleWorker:
                         rx_text += f"\nEXPORT ERROR: {export_info['error']}"
                     else:
                         status_text += f" / exported {export_info['count']} blocks"
-                        rx_text += f"\nEXPORT:\n- raw: {export_info['raw']}\n- index: {export_info['index']}"
+                        rx_text += f"\nEXPORT:\n- raw: {export_info['raw']}"
+                        if export_info.get('txt'):
+                            rx_text += f"\n- txt: {export_info['txt']}"
+                        if export_info.get('index'):
+                            rx_text += f"\n- index: {export_info['index']}"
                         if export_info.get("samples"):
                             rx_text += f"\n- samples: {export_info['samples']}"
                 
+                # Close session
+                await helpers.send_close_session()
+                
                 self.ui_queue.put(("tile_update", tile_id, {
                     "status": status_text,
-                    "checklist": {"general_info_exchange": "done", "data_collection": "done"},
+                    "checklist": {"general_info_exchange": "done", "data_collection": "done", "close_session": "done"},
                     "rx_text": rx_text,
                     "export_info": export_info,
                 }))
 
-            elif action == "close_session":
+            elif action == "full_cycle":
+                # Request overall measurements first
+                await asyncio.sleep(0.1)
+                await helpers.send_metrics_selection(int(time.time() * 1000))
+                payload, msg, msg_type = await helpers.recv_app(rx_timeout)
+                
+                # Extract overall values using the proper method
+                overall_values = []
+                if msg_type == "send_measurement":
+                    try:
+                        overall_values = self._extract_overall_values(msg.send_measurement)
+                    except Exception:
+                        pass
+                
+                # Request waveform with twf_type from settings
+                await asyncio.sleep(0.1)
+                await helpers.send_vibration_selection(int(time.time() * 1000), twf_type=twf_type)
+                
+                # Collect waveform blocks
+                received, expected = 0, None
+                wave_payloads, wave_msgs = [], []
+                while True:
+                    payload, msg, msg_type = await helpers.recv_app(rx_timeout)
+                    if msg_type != "send_measurement":
+                        break
+                    wave_payloads.append(payload)
+                    wave_msgs.append(msg)
+                    received += 1
+                    if expected is None:
+                        try:
+                            expected = int(msg.header.total_fragments)
+                            if expected <= 0:
+                                expected = None
+                        except Exception:
+                            pass
+                    self._emit(tile_id, {
+                        "phase": "waveform",
+                        "status": f"Full cycle: waveform {received}/{expected or '?'}",
+                        "checklist": {"general_info_exchange": "done", "data_collection": "in_progress"},
+                    })
+                    if expected and received >= expected:
+                        break
+                
+                # Export waveform
+                export_info = None
+                if wave_payloads:
+                    try:
+                        export_info = self._export_waveform_capture(tile_id, wave_payloads, wave_msgs)
+                    except Exception as export_exc:
+                        export_info = {"error": str(export_exc)}
+                
+                # Close session
                 await helpers.send_close_session()
-                self._emit(tile_id, {"phase": "close_session", "status": "Close session sent", "checklist": {"close_session": "done"}})
+                
+                # Format display with session info + overall + export info
+                session_info = {"accept_msg": accept_session_msg, "payload": accept_session_payload}
+                rx_text = self._format_session_and_overall_text(session_info, overall_values)
+                rx_text += f"\n\n--- WAVEFORM EXPORT ---\n"
+                if export_info:
+                    if "error" in export_info:
+                        rx_text += f"EXPORT ERROR: {export_info['error']}"
+                    else:
+                        rx_text += f"- raw: {export_info['raw']}\n"
+                        if export_info.get('txt'):
+                            rx_text += f"- txt: {export_info['txt']}\n"
+                        if export_info.get('samples'):
+                            rx_text += f"- samples: {export_info['samples']}"
+                
+                self.ui_queue.put(("tile_update", tile_id, {
+                    "status": f"Full cycle done (overall + waveform {received}/{expected or '?'})",
+                    "checklist": {"general_info_exchange": "done", "data_collection": "done", "close_session": "done"},
+                    "rx_text": rx_text,
+                    "export_info": export_info,
+                }))
 
             else:
                 raise ValueError(f"Unknown action: {action}")
@@ -867,7 +916,7 @@ class BleCycleWorker:
 
 
     async def _run_cycle_impl(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
-                        name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "") -> None:
+                        name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "", twf_type: int = None) -> None:
         """
         REFACTORED: Full auto cycle using centralized BleSessionHelpers.
         Reduced from ~350 lines to ~180 lines.
@@ -1044,7 +1093,7 @@ class BleCycleWorker:
                         if data_collection_complete:
                             current_time_ms = int(time.time() * 1000)
                             self._emit(tile_id, {"phase": "waveform", "status": "Sending vibration request...", "checklist": {"data_collection": "in_progress"}})
-                            await helpers.send_vibration_selection(current_time_ms)
+                            await helpers.send_vibration_selection(current_time_ms, twf_type=twf_type)
                             wf_res = await self._collect_waveform_export(tile_id, helpers.recv_app, rx_timeout)
                             if wf_res.get("ok"):
                                 export_info = wf_res.get("export_info")
@@ -1053,7 +1102,11 @@ class BleCycleWorker:
                                 latest_rx_text = wf_res.get("last_rx_text") or latest_rx_text
                                 if export_info and isinstance(export_info, dict) and ("error" not in export_info):
                                     latest_status = f"Waveform done ({received}/{expected or '?'}) / exported {export_info.get('count','?')} blocks"
-                                    latest_rx_text = latest_rx_text + f"\n\nEXPORT:\n- raw: {export_info.get('raw','')}\n- index: {export_info.get('index','')}"
+                                    latest_rx_text = latest_rx_text + f"\n\nEXPORT:\n- raw: {export_info.get('raw','')}"
+                                    if export_info.get('txt'):
+                                        latest_rx_text = latest_rx_text + f"\n- txt: {export_info.get('txt','')}"
+                                    if export_info.get('index'):
+                                        latest_rx_text = latest_rx_text + f"\n- index: {export_info.get('index','')}"
                                     if export_info.get('samples'):
                                         latest_rx_text = latest_rx_text + f"\n- samples: {export_info.get('samples','')}"
                                 else:

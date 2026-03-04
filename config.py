@@ -116,27 +116,25 @@ TWF_TYPE_NAMES = {
 # MANUAL ACTIONS (for Expert tab)
 # ==============================================================================
 MANUAL_ACTIONS = [
-    ("Sync Time", "sync_time"),
-    ("Version", "version"),
-    ("Config Hash", "config_hash"),
-    ("Metrics", "metrics"),
-    ("Waveform", "waveform"),
-    ("Close", "close_session"),
-    ("Connect Test", "connect_test"),
-    ("Discover GATT", "discover_gatt"),
-    ("Notify Test", "notify_test"),
+    ("Session Test", "session_test"),       # Open session, display info, close
+    ("Overall", "overall"),                 # Request all 4 overalls
+    ("Acceleration TWF", "acceleration_twf"),  # Request AccelerationTwf
+    ("Velocity TWF", "velocity_twf"),       # Request VelocityTwf
+    ("Enveloper3 TWF", "enveloper3_twf"),  # Request Enveloper3Twf
+    ("Full Cycle", "full_cycle"),          # Overall + waveform from settings
+    ("Connect Test", "connect_test"),       # Just connect and disconnect
 ]
 
 # ==============================================================================
 # CHECKLIST ITEMS (for UI display)
 # ==============================================================================
 CHECKLIST_ITEMS = [
-    ("waiting_connection", "Waiting connection"),
+    ("waiting_connection", "Scanning..."),
     ("connected", "Connected"),
-    ("general_info_exchange", "General info exchange"),
-    ("data_collection", "Data collection"),
-    ("close_session", "Close session"),
-    ("disconnect", "Disconnect"),
+    ("general_info_exchange", "Session Accepted"),
+    ("data_collection", "Data Collection"),
+    ("close_session", "Session Closed"),
+    ("disconnect", "Disconnected"),
 ]
 
 CHECKLIST_STATE_MAP = {"pending": "☐", "in_progress": "⧗", "done": "☑"}

@@ -26,7 +26,7 @@ class WaveformExporter:
     def export_waveform_capture(self, tile_id: int, payloads: list, parsed_msgs: list, 
                                formatter_func=None) -> Dict[str, str]:
         """
-        Export waveform capture to binary file only.
+        Export waveform capture to binary file + text file.
         
         Args:
             tile_id: Tile identifier
@@ -35,12 +35,13 @@ class WaveformExporter:
             formatter_func: Optional function (unused now, kept for compatibility)
         
         Returns:
-            dict: Export info with raw path and count
+            dict: Export info with raw (.bin), txt (.txt), and count
         """
         ts = time.strftime("%Y%m%d_%H%M%S")
         base = os.path.join(self.capture_dir, f"waveform_tile{tile_id}_{ts}")
         
         raw_path = base + ".bin"
+        txt_path = base + ".txt"
         
         # Write raw binary (4-byte length prefix + payload for each message)
         with open(raw_path, "wb") as f:
@@ -48,8 +49,19 @@ class WaveformExporter:
                 f.write(len(payload).to_bytes(4, "little"))
                 f.write(payload)
         
+        # Extract and export samples to text file
+        try:
+            y, meta = WaveformParser.extract_true_waveform_samples(raw_path)
+            with open(txt_path, "w") as f:
+                f.write(" ".join(str(sample) for sample in y))
+        except Exception as e:
+            # If extraction fails, still return the binary export
+            txt_path = None
+            print(f"Warning: Failed to export samples to text: {e}")
+        
         return {
             "raw": raw_path,
+            "txt": txt_path,
             "count": len(payloads)
         }
 
@@ -155,6 +167,7 @@ class WaveformParser:
         blocks = []  # (fragment_num, data_bytes)
         fs_hz = cls.DEFAULT_FS_HZ
         twf_type = None
+        data_type = None
         
         for idx, payload in enumerate(payloads):
             try:
@@ -178,6 +191,16 @@ class WaveformParser:
                             # Check if TWF type (5, 6, or 7)
                             if vib_path in (5, 6, 7):
                                 twf_type = vib_path
+                    
+                    # Try to extract sampling_rate and data_type from metadata_twf (if present)
+                    if meas_data.HasField("metadata_twf"):
+                        meta_twf = meas_data.metadata_twf
+                        if meta_twf.HasField("elo_metadata_twf"):
+                            elo_twf = meta_twf.elo_metadata_twf
+                            if hasattr(elo_twf, "sampling_rate") and elo_twf.sampling_rate > 0:
+                                fs_hz = elo_twf.sampling_rate
+                            if hasattr(elo_twf, "data_type") and elo_twf.data_type > 0:
+                                data_type = elo_twf.data_type
                     
                     # Get data bytes
                     if meas_data.HasField("data"):
@@ -212,12 +235,22 @@ class WaveformParser:
         y = list(struct.unpack("<" + "h" * count, blob))
         
         twf_type_names = {5: "AccelerationTwf", 6: "VelocityTwf", 7: "Enveloper3Twf"}
+        data_type_names = {
+            0: "Unknown",
+            1: "U8",
+            2: "S8", 
+            3: "U16",
+            4: "S16",
+            5: "U32",
+            6: "S32",
+            7: "F32"
+        }
         
         meta = {
             "blocks": len(blocks),
             "samples": len(y),
             "fs_hz": fs_hz,
-            "raw_unit": "int16",
+            "data_type": data_type_names.get(data_type, "S16") if data_type else "S16",
             "twf_type": twf_type_names.get(twf_type, "Unknown") if twf_type else "Unknown",
         }
         

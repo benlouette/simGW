@@ -40,7 +40,12 @@ except Exception:
     Figure = None
     FigureCanvasTkAgg = None
 
-from config import AUTO_RESTART_DELAY_MS, UI_POLL_INTERVAL_MS, CHECKLIST_ITEMS, CHECKLIST_STATE_MAP, MANUAL_ACTIONS, UI_COLORS
+from config import (
+    AUTO_RESTART_DELAY_MS, UI_POLL_INTERVAL_MS, CHECKLIST_ITEMS, 
+    CHECKLIST_STATE_MAP, MANUAL_ACTIONS, UI_COLORS,
+    MEASUREMENT_TYPE_ACCELERATION_TWF, MEASUREMENT_TYPE_VELOCITY_TWF, 
+    MEASUREMENT_TYPE_ENVELOPER3_TWF
+)
 from data_exporters import WaveformParser
 WaveformExportTools = WaveformParser
 
@@ -132,6 +137,53 @@ def create_app_class(BleCycleWorker, TileState):
             # Use centralized color palette from config
             self.colors = UI_COLORS
     
+            # Windows 10/11: Customize window appearance (dark mode, borders, colors)
+            try:
+                import ctypes
+                
+                # Get window handle
+                hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+                
+                # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 10 1809+)
+                # Enable dark title bar
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 20, 
+                    ctypes.byref(ctypes.c_int(1)), 
+                    ctypes.sizeof(ctypes.c_int)
+                )
+                
+                # Windows 11 22000+ specific enhancements
+                try:
+                    # DWMWA_CAPTION_COLOR = 35 - Set title bar color
+                    # Convert hex color to COLORREF (0x00BBGGRR)
+                    title_color = 0x00211a17  # Dark gray-blue matching panel
+                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                        hwnd, 35,
+                        ctypes.byref(ctypes.c_int(title_color)),
+                        ctypes.sizeof(ctypes.c_int)
+                    )
+                    
+                    # DWMWA_BORDER_COLOR = 34 - Set border color
+                    border_color = 0x003a2f2a  # Subtle dark border
+                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                        hwnd, 34,
+                        ctypes.byref(ctypes.c_int(border_color)),
+                        ctypes.sizeof(ctypes.c_int)
+                    )
+                    
+                    # DWMWA_WINDOW_CORNER_PREFERENCE = 33
+                    # DWMWCP_ROUND = 2 (rounded corners)
+                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                        hwnd, 33,
+                        ctypes.byref(ctypes.c_int(2)),
+                        ctypes.sizeof(ctypes.c_int)
+                    )
+                except Exception:
+                    pass  # Windows 11 APIs not available (Windows 10)
+                    
+            except Exception:
+                pass  # Not on Windows or API not available
+    
             style = ttk.Style(self.root)
             style.theme_use("clam")
             style.configure("TFrame", background=self.colors["bg"])
@@ -142,6 +194,35 @@ def create_app_class(BleCycleWorker, TileState):
             style.configure("TButton", background=self.colors["panel"], foreground=self.colors["text"], padding=(10, 6))
             style.configure("Accent.TButton", background=self.colors["accent"], foreground="#0b0f14", padding=(10, 6))
             style.map("Accent.TButton", background=[("active", self.colors["accent_alt"])])
+            
+            # Combobox dark theme
+            style.configure("TCombobox", 
+                fieldbackground=self.colors["panel_alt"],
+                background=self.colors["panel"],
+                foreground=self.colors["text"],
+                arrowcolor=self.colors["text"],
+                borderwidth=0)
+            style.map("TCombobox",
+                fieldbackground=[("readonly", self.colors["panel_alt"])],
+                selectbackground=[("readonly", self.colors["accent"])],
+                selectforeground=[("readonly", self.colors["text"])])
+            
+            # Scrollbar dark theme
+            style.configure("Vertical.TScrollbar",
+                background=self.colors["panel"],
+                troughcolor=self.colors["bg"],
+                borderwidth=0,
+                arrowcolor=self.colors["text"])
+            style.map("Vertical.TScrollbar",
+                background=[("active", self.colors["panel_alt"])])
+
+            # Configure popup listbox colors for Combobox
+            self.root.option_add("*TCombobox*Listbox*Background", self.colors["panel"])
+            self.root.option_add("*TCombobox*Listbox*Foreground", self.colors["text"])
+            self.root.option_add("*TCombobox*Listbox*selectBackground", self.colors["accent"])
+            self.root.option_add("*TCombobox*Listbox*selectForeground", self.colors["text"])
+
+
 
             # Notebook (tabs) styling - modern dark theme with equal width tabs
             style.configure("TNotebook", 
@@ -522,13 +603,27 @@ def create_app_class(BleCycleWorker, TileState):
     
             y, meta = WaveformExportTools.extract_true_waveform_samples(raw_path)
     
-            # Update label
+            # Update label with detailed info
             try:
                 n = int(meta.get("samples") or len(y))
             except Exception:
                 n = len(y)
+            
+            # Extract metadata
+            fs_hz = meta.get("fs_hz", 0)
+            twf_type = meta.get("twf_type", "Unknown")
+            data_type = meta.get("data_type", "S16")
+            
+            # Build info string
+            info_parts = [f"{n} samples"]
+            if fs_hz:
+                info_parts.append(f"{int(fs_hz)} Hz")
+            info_parts.append(data_type)
+            info_parts.append(twf_type)
+            info_parts.append(os.path.basename(raw_path))
+            
             if self.demo_plot_label is not None:
-                self.demo_plot_label.configure(text=f"{n} samples • {os.path.basename(raw_path)}")
+                self.demo_plot_label.configure(text=" • ".join(info_parts))
     
             ax = self.demo_plot_fig.axes[0] if self.demo_plot_fig.axes else self.demo_plot_fig.add_subplot(111)
             ax.clear()
@@ -1839,19 +1934,36 @@ def create_app_class(BleCycleWorker, TileState):
                 if not y:
                     raise RuntimeError("No waveform samples found in export")
                 
+                # Extract metadata
                 fs = float(meta.get("fs_hz", 0.0) or 0.0)
+                n_samples = meta.get("samples", len(y))
+                data_type = meta.get("data_type", "S16")
+                twf_type = meta.get("twf_type", "Unknown")
+                
+                # Build informative title
+                title_parts = [f"{n_samples} samples"]
+                if fs > 0.0:
+                    title_parts.append(f"{int(fs)} Hz")
+                title_parts.append(data_type)
+                title_parts.append(twf_type)
+                plot_title = " • ".join(title_parts)
+                
+                # Build X axis data and label
                 x = list(range(len(y)))
                 xlabel = "Sample index"
                 
                 if fs > 0.0:
                     x = [i / fs for i in range(len(y))]
-                    xlabel = f"Time (s) @ Fs={fs:g} Hz"
+                    xlabel = f"Time (s) @ Fs={int(fs)} Hz"
+                
+                # Y axis label with TWF type
+                ylabel = f"{twf_type.replace('Twf', '')} (raw {data_type})"
                 
                 plt.figure(figsize=(12, 6))
                 plt.plot(x, y, linewidth=0.5)
-                plt.title(f"{title} ({meta.get('samples', len(y))} samples)")
+                plt.title(plot_title)
                 plt.xlabel(xlabel)
-                plt.ylabel("Acceleration (raw int16)")
+                plt.ylabel(ylabel)
                 plt.grid(True, alpha=0.3)
                 plt.tight_layout()
                 plt.show()

@@ -1,0 +1,97 @@
+================================================================================
+SESSION: sensor7_20260304_085032_session_test
+STARTED: 2026-03-04 08:50:32
+================================================================================
+
+[2026-03-04 08:50:32] EVENT | manual_start:session_test
+--------------------------------------------------------------------------------
+[2026-03-04 08:50:35] EVENT | connected:C4:BD:6A:01:02:03
+--------------------------------------------------------------------------------
+[2026-03-04 08:50:35] TX | write | open_session
+  Length: 18 bytes
+  Key fields:
+    sync_time: 1772610635
+  Hex:
+    0A 08 08 01 10 01 20 01 28 01 52 06 08 CB C8 9F CD 06
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 1
+      current_fragment: 1
+      total_fragments: 1
+    }
+    open_session {
+      current_sync_time: 1772610635
+    }
+--------------------------------------------------------------------------------
+[2026-03-04 08:50:35] RX | notify | accept_session
+  Length: 42 bytes
+  Key fields:
+    virtual_id: 0
+    hw_type: 1
+    fw_version: 66051
+    serial: c4bd6a010203
+    battery: 95
+    config_hash: 4294967295
+  Hex:
+    0A 04 08 01 10 01 5A 22 10 01 18 05 22 06 C4 BD 6A 01 02 03 28 83 84 04 30 83 84 04 38 FF FF FF
+    FF 0F 48 5F 52 04 0A 02 08 77
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 1
+    }
+    accept_session {
+      hardware_type: HardwareTypeCmwa6120_std
+      hw_version: 5
+      serial: "\304\275j\001\002\003"
+      fw_version: 66051
+      fw_cache_version: 66051
+      config_hash: 4294967295
+      battery_indicator: 95
+      session_info {
+        session_info_ble {
+          rssi: -60
+        }
+      }
+    }
+--------------------------------------------------------------------------------
+[2026-03-04 08:50:35] TX | write | command
+  Length: 14 bytes
+  Key fields:
+    command_type: 1
+  Hex:
+    0A 08 08 01 10 02 20 01 28 01 72 02 08 01
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 2
+      current_fragment: 1
+      total_fragments: 1
+    }
+    command {
+      command: CommandTypeCloseSession
+    }
+--------------------------------------------------------------------------------
+[2026-03-04 08:50:35] RX | notify | ack
+  Length: 10 bytes
+  Key fields:
+    ack: True
+    error_code: 0
+  Hex:
+    0A 04 08 01 10 02 7A 02 08 01
+  Protobuf structure:
+    header {
+      version: 1
+      message_id: 2
+    }
+    ack {
+      ack: true
+    }
+--------------------------------------------------------------------------------
+[2026-03-04 08:50:36] EVENT | disconnect_done
+--------------------------------------------------------------------------------
+
+================================================================================
+SESSION ENDED: 2026-03-04 08:50:36
+================================================================================
