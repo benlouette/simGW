@@ -35,57 +35,6 @@ def demo_clear_debug(app) -> None:
         pass
 
 
-def demo_reset_ui_state(app, keep_debug: bool = True) -> None:
-    """Reset Demo tab UI state (KPIs, timeline, summary, plot)."""
-    try:
-        app.demo_status_var.set("Idle")
-        app.demo_device_var.set("")
-        app.demo_export_var.set("")
-        app.demo_overall_var.set("•")
-        app.demo_waveform_var.set("•")
-    except Exception:
-        pass
-
-    try:
-        if app.demo_summary is not None:
-            app.demo_summary.configure(state=tk.NORMAL)
-            app.demo_summary.delete("1.0", tk.END)
-            app.demo_summary.insert(tk.END, "•\n")
-            app.demo_summary.configure(state=tk.DISABLED)
-    except Exception:
-        pass
-
-    try:
-        app.demo_checklist_state = {key: "pending" for key, _title in CHECKLIST_ITEMS}
-        app._demo_update_timeline({})
-    except Exception:
-        pass
-
-    try:
-        if getattr(app, "demo_plot_label", None) is not None:
-            app.demo_plot_label.config(text="(waiting for waveform...)")
-        if getattr(app, "demo_plot_fig", None) is not None:
-            ax = app.demo_plot_fig.axes[0] if app.demo_plot_fig.axes else app.demo_plot_fig.add_subplot(111)
-            ax.clear()
-            ax.set_xlabel("Sample")
-            ax.set_ylabel("Value")
-            ax.grid(True, alpha=0.2)
-            if getattr(app, "demo_plot_canvas", None) is not None:
-                app.demo_plot_canvas.draw()
-    except Exception:
-        pass
-
-    try:
-        app.demo_last_overall_values = None
-        app.demo_last_overall_rx_text = ""
-        app.demo_last_wave_rx_text = ""
-    except Exception:
-        pass
-
-    if not keep_debug:
-        app._demo_clear_debug()
-
-
 def build_ui_demo(app, parent: tk.Frame) -> None:
     """Demo-friendly UI: no hex dumps, just KPIs + a timeline + a short summary."""
     panel = tk.Frame(parent, bg=app.colors["bg"])
@@ -180,7 +129,7 @@ def build_ui_demo(app, parent: tk.Frame) -> None:
         ax.set_xlabel("Sample")
         ax.set_ylabel("Value")
         ax.grid(True, alpha=0.2)
-        app._demo_style_plot_axes(ax)
+        demo_style_plot_axes(app, ax)
 
         app.demo_plot_canvas = FigureCanvasTkAgg(app.demo_plot_fig, master=plot_area)
         app.demo_plot_widget = app.demo_plot_canvas.get_tk_widget()
@@ -202,7 +151,7 @@ def build_ui_demo(app, parent: tk.Frame) -> None:
     hdr.pack(fill=tk.X)
     tk.Label(hdr, text="Debug", bg=app.colors["panel"], fg=app.colors["muted"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
 
-    ttk.Button(hdr, text="Clear", command=app._demo_clear_debug).pack(side=tk.RIGHT)
+    ttk.Button(hdr, text="Clear", command=lambda: demo_clear_debug(app)).pack(side=tk.RIGHT)
 
     app.demo_debug = tk.Text(
         dbg_in,
@@ -248,7 +197,7 @@ def demo_style_plot_axes(app, ax) -> None:
     app.demo_summary.tag_configure("v", foreground=app.colors["text"], font=("Segoe UI", 10, "normal"))
     app.demo_summary.tag_configure("h", foreground=app.colors["text"], font=("Segoe UI", 10, "bold"))
 
-    app._demo_update_timeline({})
+    demo_update_timeline(app, {})
 
 
 def demo_plot_waveform_from_raw_export(app, raw_path: str) -> None:
@@ -267,13 +216,18 @@ def demo_plot_waveform_from_raw_export(app, raw_path: str) -> None:
     except Exception:
         n = len(y)
 
-    fs_hz = meta.get("fs_hz", 0)
+    fs_hz = meta.get("fs_hz")
     twf_type = meta.get("twf_type", "Unknown")
     data_type = meta.get("data_type", "S16")
 
+    try:
+        fs_value = float(fs_hz) if fs_hz is not None else 0.0
+    except Exception:
+        fs_value = 0.0
+    fs_text = f"{int(fs_value)} Hz" if fs_value > 0.0 else "n/a"
+
     info_parts = [f"{n} samples"]
-    if fs_hz:
-        info_parts.append(f"{int(fs_hz)} Hz")
+    info_parts.append(f"Sampling rate: {fs_text}")
     info_parts.append(data_type)
     info_parts.append(twf_type)
     info_parts.append(os.path.basename(raw_path))
@@ -287,7 +241,7 @@ def demo_plot_waveform_from_raw_export(app, raw_path: str) -> None:
     ax.set_xlabel("Sample")
     ax.set_ylabel("Amplitude (int16)")
     ax.grid(True, alpha=0.2)
-    app._demo_style_plot_axes(ax)
+    demo_style_plot_axes(app, ax)
     app.demo_plot_canvas.draw()
 
 

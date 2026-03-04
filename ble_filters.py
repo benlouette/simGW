@@ -5,17 +5,90 @@ Centralized module for BLE device filtering and advertising data formatting.
 Prevents code duplication across ui_application.py and simGw_v9.py.
 """
 
-from typing import Optional
+_SECTION_DIVIDER = "=" * 60
+
+# Known manufacturer IDs (Bluetooth SIG assigned numbers)
+_KNOWN_MANUFACTURERS = {
+    0x004C: "Apple Inc.",
+    0x0059: "Nordic Semiconductor ASA",
+    0x006A: "Abbott Diabetes Care",
+    0x0075: "Samsung Electronics Co. Ltd.",
+    0x00E0: "Google LLC",
+    0x0087: "Garmin International, Inc.",
+    0x0157: "Huawei Technologies Co., Ltd.",
+    0x040E: "SKF (U.K.) Limited",
+    0x0D63: "SKF France",
+}
+
+
+def _as_bytes(value) -> bytes:
+    return bytes(value) if not isinstance(value, (bytes, bytearray)) else value
+
+
+def _device_address(device) -> str:
+    if isinstance(device, str):
+        return str(device)
+    return getattr(device, "address", "") or ""
+
+
+def _device_name(device) -> str:
+    if isinstance(device, str):
+        return ""
+    return getattr(device, "name", "") or ""
+
+
+def _append_section_header(lines: list[str], title: str) -> None:
+    lines.append(_SECTION_DIVIDER)
+    lines.append(title)
+    lines.append(_SECTION_DIVIDER)
+
+
+def _append_service_uuids(lines: list[str], adv) -> None:
+    service_uuids = getattr(adv, "service_uuids", None) or []
+    if not service_uuids:
+        lines.append("🔧 SERVICE UUIDs: (none)")
+        return
+
+    lines.append(f"🔧 SERVICE UUIDs ({len(service_uuids)}):")
+    for service_uuid in service_uuids:
+        label = f"{service_uuid} (short)" if len(service_uuid) <= 8 else service_uuid
+        lines.append(f"  • {label}")
+
+
+def _append_manufacturer_data(lines: list[str], adv) -> None:
+    manufacturer_data = getattr(adv, "manufacturer_data", None) or {}
+    if not manufacturer_data:
+        lines.append("🏭 MANUFACTURER DATA: (none - no manufacturer AD field in this advertisement)")
+        return
+
+    lines.append(f"🏭 MANUFACTURER DATA ({len(manufacturer_data)} entries):")
+    for manufacturer_id, raw_value in sorted(manufacturer_data.items(), key=lambda item: int(item[0])):
+        value_bytes = _as_bytes(raw_value)
+        manufacturer_name = _KNOWN_MANUFACTURERS.get(manufacturer_id, "Unknown")
+        lines.append(f"  • ID: 0x{manufacturer_id:04X} ({manufacturer_name})")
+        lines.append(f"    Data: {value_bytes.hex().upper()}")
+        lines.append(f"    Len:  {len(value_bytes)} bytes")
+
+
+def _append_service_data(lines: list[str], adv) -> None:
+    service_data = getattr(adv, "service_data", None) or {}
+    if not service_data:
+        lines.append("🔐 SERVICE DATA: (none)")
+        return
+
+    lines.append(f"🔐 SERVICE DATA ({len(service_data)} entries):")
+    for service_uuid, raw_value in sorted(service_data.items(), key=lambda item: str(item[0])):
+        value_bytes = _as_bytes(raw_value)
+        lines.append(f"  • UUID: {service_uuid}")
+        lines.append(f"    Data: {value_bytes.hex().upper()}")
+        lines.append(f"    Len:  {len(value_bytes)} bytes")
 
 
 def adv_matches(
     device, 
     adv, 
     addr_prefix: str = "", 
-    name_contains: str = "", 
-    svc_contains: str = "", 
-    mfg_id_hex: str = "", 
-    mfg_data_hex: str = ""
+    name_contains: str = "",
 ) -> bool:
     """
     Check if a BLE device matches the given filters.
@@ -25,77 +98,31 @@ def adv_matches(
         adv: AdvertisementData object (can be None)
         addr_prefix: Match device address starting with this (case-insensitive)
         name_contains: Match name containing this substring (case-insensitive)
-        svc_contains: Match service UUID containing this substring (case-insensitive)
-        mfg_id_hex: Match manufacturer ID (e.g., "004C" or "0x004C")
-        mfg_data_hex: Match manufacturer data containing this hex string
     
     Returns:
         True if device matches all non-empty filters, False otherwise
     """
+    address = _device_address(device).upper()
+
     # Address prefix filter
     addr_prefix = (addr_prefix or "").strip().upper()
-    if addr_prefix:
-        addr = (getattr(device, "address", "") if not isinstance(device, str) else str(device)).upper()
-        if not addr.startswith(addr_prefix):
-            return False
+    if addr_prefix and not address.startswith(addr_prefix):
+        return False
+
+    name_query = (name_contains or "").strip().lower()
+    if not name_query:
+        return True
+
+    device_name = _device_name(device)
 
     if not adv:
-        # If no adv data, only address prefix can match
-        return True if addr_prefix else False
+        return name_query in device_name.lower()
 
     # Name filter (device.name or adv.local_name)
-    if name_contains:
-        n = (getattr(adv, "local_name", "") or "") + " " + (getattr(device, "name", "") or "")
-        if name_contains.lower() not in n.lower():
-            return False
-
-    # Service UUID filter
-    if svc_contains:
-        su = getattr(adv, "service_uuids", None) or []
-        if not any(svc_contains.lower() in (u or "").lower() for u in su):
-            return False
-
-    # Manufacturer ID and data filters
-    mfg_id_hex = (mfg_id_hex or "").strip().lower().replace("0x", "")
-    mfg_data_hex = (mfg_data_hex or "").strip().lower().replace("0x", "")
-
-    if mfg_id_hex:
-        try:
-            want_id = int(mfg_id_hex, 16)
-        except ValueError:
-            want_id = None
-        if want_id is not None:
-            md = getattr(adv, "manufacturer_data", None) or {}
-            if want_id not in md:
-                return False
-            if mfg_data_hex:
-                sub = "".join(ch for ch in mfg_data_hex if ch in "0123456789abcdef")
-                try:
-                    sub_b = bytes.fromhex(sub)
-                except ValueError:
-                    sub_b = b""
-                if sub_b:
-                    vv = bytes(md[want_id]) if not isinstance(md[want_id], (bytes, bytearray)) else md[want_id]
-                    if sub_b not in vv:
-                        return False
-    else:
-        if mfg_data_hex:
-            # If data specified but no ID, match any manufacturer value containing it
-            sub = "".join(ch for ch in mfg_data_hex if ch in "0123456789abcdef")
-            try:
-                sub_b = bytes.fromhex(sub)
-            except ValueError:
-                sub_b = b""
-            if sub_b:
-                md = getattr(adv, "manufacturer_data", None) or {}
-                found = False
-                for _k, v in md.items():
-                    vv = bytes(v) if not isinstance(v, (bytes, bytearray)) else v
-                    if sub_b in vv:
-                        found = True
-                        break
-                if not found:
-                    return False
+    local_name = (getattr(adv, "local_name", "") or "")
+    search_blob = f"{local_name} {device_name}".lower()
+    if name_query not in search_blob:
+        return False
 
     return True
 
@@ -112,20 +139,16 @@ def format_adv_details(device, adv) -> str:
         Formatted multi-line string with device and advertising details
     """
     lines = []
-    lines.append("=" * 60)
-    lines.append(f"📱 DEVICE INFORMATION")
-    lines.append("=" * 60)
-    lines.append(f"Address:     {getattr(device, 'address', device)}")
-    lines.append(f"Name:        {getattr(device, 'name', '') or '(unnamed)'}")
+    _append_section_header(lines, "📱 DEVICE INFORMATION")
+    lines.append(f"Address:     {_device_address(device)}")
+    lines.append(f"Name:        {_device_name(device) or '(unnamed)'}")
     
     if adv is None:
         lines.append("No AdvertisingData available.")
         return "\n".join(lines)
 
     lines.append("")
-    lines.append("=" * 60)
-    lines.append(f"📡 ADVERTISING DATA")
-    lines.append("=" * 60)
+    _append_section_header(lines, "📡 ADVERTISING DATA")
     lines.append(f"Local name:  {getattr(adv, 'local_name', None) or '(not set)'}")
     lines.append(f"RSSI:        {getattr(adv, 'rssi', None)} dBm")
     
@@ -139,61 +162,17 @@ def format_adv_details(device, adv) -> str:
     
     lines.append("")
     
-    # Service UUIDs
-    su = getattr(adv, "service_uuids", None) or []
-    if su:
-        lines.append(f"🔧 SERVICE UUIDs ({len(su)}):")
-        for u in su:
-            # Try to show short UUID for standard services
-            if len(u) > 8:
-                lines.append(f"  • {u}")
-            else:
-                lines.append(f"  • {u} (short)")
-    else:
-        lines.append("🔧 SERVICE UUIDs: (none)")
+    _append_service_uuids(lines, adv)
     
     lines.append("")
     
-    # Manufacturer data with known IDs
-    md = getattr(adv, "manufacturer_data", None) or {}
-    if md:
-        lines.append(f"🏭 MANUFACTURER DATA ({len(md)} entries):")
-        
-        # Known manufacturer IDs (Bluetooth SIG assigned numbers)
-        known_mfg = {
-            0x004C: "Apple Inc.",
-            0x0059: "Nordic Semiconductor ASA",
-            0x006A: "Abbott Diabetes Care",
-            0x0075: "Samsung Electronics Co. Ltd.",
-            0x00E0: "Google LLC",
-            0x0087: "Garmin International, Inc.",
-            0x0157: "Huawei Technologies Co., Ltd.",
-        }
-        
-        for k, v in md.items():
-            vv = bytes(v) if not isinstance(v, (bytes, bytearray)) else v
-            mfg_name = known_mfg.get(k, "Unknown")
-            lines.append(f"  • ID: 0x{k:04X} ({mfg_name})")
-            lines.append(f"    Data: {vv.hex().upper()}")
-            lines.append(f"    Len:  {len(vv)} bytes")
-    else:
-        lines.append("🏭 MANUFACTURER DATA: (none)")
+    _append_manufacturer_data(lines, adv)
     
     lines.append("")
     
-    # Service data
-    sd = getattr(adv, "service_data", None) or {}
-    if sd:
-        lines.append(f"🔐 SERVICE DATA ({len(sd)} entries):")
-        for k, v in sd.items():
-            vv = bytes(v) if not isinstance(v, (bytes, bytearray)) else v
-            lines.append(f"  • UUID: {k}")
-            lines.append(f"    Data: {vv.hex().upper()}")
-            lines.append(f"    Len:  {len(vv)} bytes")
-    else:
-        lines.append("🔐 SERVICE DATA: (none)")
+    _append_service_data(lines, adv)
     
     lines.append("")
-    lines.append("=" * 60)
+    lines.append(_SECTION_DIVIDER)
     
     return "\n".join(lines)

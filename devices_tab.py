@@ -32,9 +32,6 @@ def build_ui_devices(app, parent: tk.Frame) -> None:
     tk.Label(filters_in, text="Name:", bg=app.colors["panel"], fg=app.colors["muted"]).pack(side=tk.LEFT, padx=(0, 4))
     ttk.Entry(filters_in, textvariable=app.adv_name_contains_var, width=15).pack(side=tk.LEFT, padx=(0, 12))
 
-    tk.Label(filters_in, text="Service UUID:", bg=app.colors["panel"], fg=app.colors["muted"]).pack(side=tk.LEFT, padx=(0, 4))
-    ttk.Entry(filters_in, textvariable=app.adv_service_uuid_contains_var, width=12).pack(side=tk.LEFT)
-
     body = tk.Frame(parent, bg=app.colors["bg"])
     body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
 
@@ -62,7 +59,7 @@ def build_ui_devices(app, parent: tk.Frame) -> None:
     tree_style.map("Treeview", background=[("selected", app.colors["accent"])], foreground=[("selected", "#ffffff")])
 
     tree.pack(fill=tk.BOTH, expand=True)
-    tree.bind("<<TreeviewSelect>>", app._devices_on_select)
+    tree.bind("<<TreeviewSelect>>", lambda event: devices_on_select(app, event))
     app.devices_tree = tree
 
     right_panel = tk.Frame(body, bg=app.colors["bg"])
@@ -95,7 +92,7 @@ def devices_scan(app) -> None:
     except Exception:
         pass
 
-    addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, svc_contains, mfg_id_hex, mfg_data_hex, _twf_type = app._read_runtime_params()
+    addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, _twf_type = app._read_runtime_params()
     timeout_s = 5.0
 
     def worker():
@@ -119,7 +116,7 @@ def devices_scan(app) -> None:
                 return pairs
 
             pairs = asyncio.run(_do())
-            app.root.after(0, lambda: app._devices_populate(pairs))
+            app.root.after(0, lambda: devices_populate(app, pairs))
         except Exception as exc:
             app.root.after(0, lambda: app.devices_scan_status_var.set(f"❌ Error: {type(exc).__name__}"))
         finally:
@@ -133,7 +130,7 @@ def devices_populate(app, pairs) -> None:
         app._devices_by_addr = {}
 
     now_ms = int(time.time() * 1000)
-    addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, svc_contains, mfg_id_hex, mfg_data_hex, _twf_type = app._read_runtime_params()
+    addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, _twf_type = app._read_runtime_params()
 
     added = 0
     updated = 0
@@ -147,7 +144,7 @@ def devices_populate(app, pairs) -> None:
         if not addr:
             continue
 
-        ok = ble_adv_matches(dev, adv, addr_prefix, name_contains, svc_contains, mfg_id_hex, mfg_data_hex)
+        ok = ble_adv_matches(dev, adv, addr_prefix, name_contains)
         if not ok:
             continue
 
@@ -211,13 +208,6 @@ def devices_on_select(app, _evt) -> None:
     dev = item.get("dev")
     adv = item.get("adv")
     txt = ble_format_adv_details(dev, adv)
-    app.devices_detail.configure(state=tk.NORMAL)
-    app.devices_detail.delete("1.0", tk.END)
-    app.devices_detail.insert("1.0", txt)
-    app.devices_detail.configure(state=tk.DISABLED)
-
-
-def devices_set_details(app, txt: str) -> None:
     app.devices_detail.configure(state=tk.NORMAL)
     app.devices_detail.delete("1.0", tk.END)
     app.devices_detail.insert("1.0", txt)

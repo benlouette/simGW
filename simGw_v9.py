@@ -46,6 +46,7 @@ class BleCycleWorker:
         self.ui_queue = ui_queue
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
+        self.waveform_exporter = WaveformExporter(CAPTURE_DIR)
         self.uart_service_uuid, self.uart_rx_uuid, self.uart_tx_uuid = get_uart_uuids(True)
         self._tile_phase_rank = {}  # tile_id -> last phase rank
         # Hard-stop support (cancellation)
@@ -94,29 +95,23 @@ class BleCycleWorker:
             return self._cancel_all or (int(tile_id) in self._cancel_tiles)
 
     def _emit(self, tile_id: int, payload: TileUpdatePayload) -> None:
-                """Centralized UI emitter for tile updates.
-                Adds ts_ms automatically. Never raises.
-                Also enforces a monotonic 'phase' progression per tile (best-effort).
-                """
-                try:
-                    out = dict(payload) if payload is not None else {}
-                    out.setdefault("ts_ms", int(time.time() * 1000))
+        """Centralized UI emitter for tile updates with monotonic phase ordering."""
+        try:
+            out = dict(payload) if payload is not None else {}
+            out.setdefault("ts_ms", int(time.time() * 1000))
 
-                    # Keep phase monotonic per tile to avoid confusing UI regressions.
-                    if "phase" in out and out["phase"]:
-                        pr = phase_rank(str(out["phase"]))
-                        prev = self._tile_phase_rank.get(tile_id, -1)
-                        if pr >= 0:
-                            if prev >= 0 and pr < prev:
-                                # Don't regress; keep the last known phase.
-                                out["phase"] = _PHASE_ORDER[prev]
-                            else:
-                                self._tile_phase_rank[tile_id] = pr
+            if "phase" in out and out["phase"]:
+                pr = phase_rank(str(out["phase"]))
+                prev = self._tile_phase_rank.get(tile_id, -1)
+                if pr >= 0:
+                    if prev >= 0 and pr < prev:
+                        out["phase"] = _PHASE_ORDER[prev]
+                    else:
+                        self._tile_phase_rank[tile_id] = pr
 
-                    self.ui_queue.put(make_tile_update(tile_id, out))
-                except Exception:
-                    # Never crash worker on UI update failure
-                    pass
+            self.ui_queue.put(make_tile_update(tile_id, out))
+        except Exception:
+            pass
 
     def _create_ui_callback(self, tile_id: int) -> Callable[[TileUpdatePayload], None]:
         """Create a UI callback function for BLE helpers to avoid duplication."""
@@ -124,52 +119,31 @@ class BleCycleWorker:
             self.ui_queue.put(make_tile_update(tile_id, update_dict))
         return ui_callback
 
-    async def _run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
-                        name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "", twf_type: int = None) -> None:
-        """Backward-compatible wrapper (some versions referenced _run_cycle)."""
-        await self._run_cycle_impl(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root,
-                                  name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type)
-
     def run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
-                name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "", twf_type: int = None) -> None:
+                name_contains: str = "", twf_type: int = None) -> None:
         # Clear any previous cancelled state before starting
         with self._cancel_lock:
             self._cancel_all = False
             self._cancel_tiles.discard(int(tile_id))
         self._call_soon(self._run_cycle_impl(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root,
-                        name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type))
+                        name_contains, twf_type))
 
     def run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str, record_sessions: bool, session_root: str,
-                name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "", twf_type: int = None) -> None:
+                name_contains: str = "", twf_type: int = None) -> None:
         # Clear any previous cancelled state before starting
         with self._cancel_lock:
             self._cancel_all = False
             self._cancel_tiles.discard(int(tile_id))
         self._call_soon(self._run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root,
-                        name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type))
-
-    def _extract_overall_values(self, data_upload_msg) -> list:
-        """REFACTORED: Wrapper to OverallValuesExtractor."""
-        return OverallValuesExtractor.extract_overall_values(data_upload_msg)
-    
-    def _export_waveform_capture(self, tile_id: int, payloads: list, parsed_msgs: list) -> dict:
-        """REFACTORED: Wrapper to WaveformExporter."""
-        exporter = WaveformExporter(CAPTURE_DIR)
-        return exporter.export_waveform_capture(tile_id, payloads, parsed_msgs, ProtobufFormatter.hex_short)
+                        name_contains, twf_type))
 
     async def _run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str, record_sessions: bool, session_root: str,
-                            name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "", twf_type: int = None) -> None:
+                            name_contains: str = "", twf_type: int = None) -> None:
         """
         REFACTORED: Execute manual BLE action using centralized BleSessionHelpers.
         Reduced from ~400 lines to ~150 lines.
         """
-        address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains = normalize_ble_filters(
-            address_prefix,
-            name_contains,
-            service_uuid_contains,
-            mfg_id_hex,
-            mfg_data_hex_contains,
-        )
+        address_prefix, name_contains = normalize_ble_filters(address_prefix, name_contains)
         
         # Setup session recorder
         recorder, session_dir = create_session_recorder(
@@ -187,9 +161,6 @@ class BleCycleWorker:
         matched, was_cancelled = await scan_for_matching_device(
             address_prefix=address_prefix,
             name_contains=name_contains,
-            service_uuid_contains=service_uuid_contains,
-            mfg_id_hex=mfg_id_hex,
-            mfg_data_hex_contains=mfg_data_hex_contains,
             scan_timeout=scan_timeout,
             is_cancelled=lambda: self._is_cancelled(tile_id),
         )
@@ -262,7 +233,7 @@ class BleCycleWorker:
             elif action == "overall":
                 # Session already open, directly request metrics
                 await asyncio.sleep(0.1)
-                await helpers.send_metrics_selection(int(time.time() * 1000))
+                await helpers.send_metrics_selection()
                 payload, msg, msg_type = await helpers.recv_app(rx_timeout)
                 status = f"RX {msg_type}"
                 if msg_type == "send_measurement":
@@ -294,17 +265,16 @@ class BleCycleWorker:
                 
                 # Request specific waveform type
                 await asyncio.sleep(0.1)
-                await helpers.send_vibration_selection(int(time.time() * 1000), twf_type=req_twf_type)
+                await helpers.send_vibration_selection(twf_type=req_twf_type)
                 
                 # Collect waveform blocks
                 received, expected = 0, None
-                wave_payloads, wave_msgs = [], []
+                wave_payloads = []
                 while True:
                     payload, msg, msg_type = await helpers.recv_app(rx_timeout)
                     if msg_type != "send_measurement":
                         break
                     wave_payloads.append(payload)
-                    wave_msgs.append(msg)
                     received += 1
                     if expected is None:
                         try:
@@ -326,7 +296,7 @@ class BleCycleWorker:
                 export_info = None
                 if wave_payloads:
                     try:
-                        export_info = self._export_waveform_capture(tile_id, wave_payloads, wave_msgs)
+                        export_info = self.waveform_exporter.export_waveform_capture(tile_id, wave_payloads)
                     except Exception as export_exc:
                         export_info = {"error": str(export_exc)}
                 
@@ -359,30 +329,29 @@ class BleCycleWorker:
             elif action == "full_cycle":
                 # Request overall measurements first
                 await asyncio.sleep(0.1)
-                await helpers.send_metrics_selection(int(time.time() * 1000))
+                await helpers.send_metrics_selection()
                 payload, msg, msg_type = await helpers.recv_app(rx_timeout)
                 
                 # Extract overall values using the proper method
                 overall_values = []
                 if msg_type == "send_measurement":
                     try:
-                        overall_values = self._extract_overall_values(msg.send_measurement)
+                        overall_values = OverallValuesExtractor.extract_overall_values(msg.send_measurement)
                     except Exception:
                         pass
                 
                 # Request waveform with twf_type from settings
                 await asyncio.sleep(0.1)
-                await helpers.send_vibration_selection(int(time.time() * 1000), twf_type=twf_type)
+                await helpers.send_vibration_selection(twf_type=twf_type)
                 
                 # Collect waveform blocks
                 received, expected = 0, None
-                wave_payloads, wave_msgs = [], []
+                wave_payloads = []
                 while True:
                     payload, msg, msg_type = await helpers.recv_app(rx_timeout)
                     if msg_type != "send_measurement":
                         break
                     wave_payloads.append(payload)
-                    wave_msgs.append(msg)
                     received += 1
                     if expected is None:
                         try:
@@ -403,7 +372,7 @@ class BleCycleWorker:
                 export_info = None
                 if wave_payloads:
                     try:
-                        export_info = self._export_waveform_capture(tile_id, wave_payloads, wave_msgs)
+                        export_info = self.waveform_exporter.export_waveform_capture(tile_id, wave_payloads)
                     except Exception as export_exc:
                         export_info = {"error": str(export_exc)}
                 
@@ -460,23 +429,17 @@ class BleCycleWorker:
             rx_timeout=rx_timeout,
             is_cancelled=lambda: self._is_cancelled(tile_id),
             emit=lambda payload: self._emit(tile_id, payload),
-            export_waveform_capture=self._export_waveform_capture,
+            export_waveform_capture=lambda tid, payloads: self.waveform_exporter.export_waveform_capture(tid, payloads),
         )
 
 
     async def _run_cycle_impl(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
-                        name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "", twf_type: int = None) -> None:
+                        name_contains: str = "", twf_type: int = None) -> None:
         """
         REFACTORED: Full auto cycle using centralized BleSessionHelpers.
         Reduced from ~350 lines to ~180 lines.
         """
-        address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains = normalize_ble_filters(
-            address_prefix,
-            name_contains,
-            service_uuid_contains,
-            mfg_id_hex,
-            mfg_data_hex_contains,
-        )
+        address_prefix, name_contains = normalize_ble_filters(address_prefix, name_contains)
         
         # Setup session recorder
         recorder, session_dir = create_session_recorder(
@@ -494,9 +457,6 @@ class BleCycleWorker:
         matched, _was_cancelled = await scan_for_matching_device(
             address_prefix=address_prefix,
             name_contains=name_contains,
-            service_uuid_contains=service_uuid_contains,
-            mfg_id_hex=mfg_id_hex,
-            mfg_data_hex_contains=mfg_data_hex_contains,
             scan_timeout=scan_timeout,
             is_cancelled=None,
         )
@@ -589,7 +549,7 @@ class BleCycleWorker:
                             current_time_ms = int(time.time() * 1000)
                             
                             self._emit(tile_id, {"phase": "metrics", "status": f"Sending measurement_request ({loop_index + 1}/6)..."})
-                            await helpers.send_metrics_selection(current_time_ms)
+                            await helpers.send_metrics_selection()
 
                             try:
                                 data_payload, data_message, data_type = await helpers.recv_app(rx_timeout)
@@ -602,7 +562,7 @@ class BleCycleWorker:
                                 try:
                                     if data_type == "send_measurement":
                                         measurement_data_list = list(data_message.send_measurement.measurement_data)
-                                        overall_values = self._extract_overall_values(data_message.send_measurement)
+                                        overall_values = OverallValuesExtractor.extract_overall_values(data_message.send_measurement)
                                         if len(measurement_data_list) >= 3:
                                             latest_status = "Measurement data received"
                                         else:
@@ -633,7 +593,7 @@ class BleCycleWorker:
                         if data_collection_complete:
                             current_time_ms = int(time.time() * 1000)
                             self._emit(tile_id, {"phase": "waveform", "status": "Sending vibration request...", "checklist": {"data_collection": "in_progress"}})
-                            await helpers.send_vibration_selection(current_time_ms, twf_type=twf_type)
+                            await helpers.send_vibration_selection(twf_type=twf_type)
                             wf_res = await self._collect_waveform_export(tile_id, helpers.recv_app, rx_timeout)
                             if wf_res.get("ok"):
                                 export_info = wf_res.get("export_info")

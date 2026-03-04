@@ -33,8 +33,8 @@ Advanced BLE gateway application for SKF sensors with real-time data capture, pr
 ### Modular Design (Refactored March 2026)
 
 **Core Modules:**
-- **simGw_v9.py** - Main application entry point and BLE worker
-- **ui_application.py** - Tkinter GUI (4-tab interface with dark theme)
+- **simGw_v9.py** - Main entry point + `BleCycleWorker` orchestration
+- **ui_application.py** - Tkinter GUI shell and queue consumer
 
 **Configuration Modules:**
 - **ble_config.py** - BLE UUIDs, measurement types, protocol constants
@@ -48,12 +48,23 @@ Advanced BLE gateway application for SKF sensors with real-time data capture, pr
 - **data_exporters.py** - Waveform export to binary format
 - **session_recorder.py** - Session logging with protobuf decoding
 
+**Worker Services (extracted):**
+- **ble_worker_services.py** - Filter normalization, recorder creation, scan helpers
+- **ble_waveform_service.py** - Shared waveform collection/export flow
+
+**UI Tab Modules:**
+- **demo_tab.py** - Demo tab widgets and helpers
+- **expert_tab.py** - Expert tab widgets and tile helpers
+- **devices_tab.py** - Devices scan table and details view
+- **settings_tab.py** - Settings tab controls
+
 **UI Utilities:**
 - **ui_helpers.py** - Reusable Tkinter widgets and styling helpers
 - **display_formatters.py** - Session and measurement text formatting
 
-**Legacy:**
-- **config.py** - Deprecated wrapper (use specialized modules instead)
+**Protocol / Event Integration:**
+- **protocol_imports.py** - Single import entry-point for protobuf modules (`app_pb2`, etc.)
+- **ui_events.py** - Typed queue contract (`tile_update`, `cycle_done`) between worker and UI
 
 ### Protocol
 - **protocol/** - Simplified protobuf definitions (SKF protocol)
@@ -108,7 +119,6 @@ pip install -r requirements.txt
 ### Session Recording
 Sessions are automatically logged to `sessions/<sensor_id>_<timestamp>/` with:
 - **events.txt**: Decoded protobuf messages with human-readable format
-- **meta.json**: Session metadata (device info, timestamps)
 - Hex dumps for debugging
 
 ### Waveform Export
@@ -173,7 +183,8 @@ The `.gitignore` file excludes:
 
 **Protobuf decode errors**
 - Verify `protocol/` directory contains all required `*_pb2.py` files
-- Regenerate if needed: `protoc --python_out=. *.proto` (from protocol/ directory)
+- Regenerate if needed: `protoc --python_out=. *.proto` (from `protocol/` directory)
+- Keep module names unchanged (`app_pb2.py`, `session_pb2.py`, etc.) because imports are centralized in `protocol_imports.py`
 
 **UI Theme Issues (Windows)**
 - Dark title bar requires Windows 10 1809+
@@ -187,6 +198,13 @@ The `.gitignore` file excludes:
 - **Dependency Injection**: `ui_application.py` uses factory pattern for testability
 - **Centralized Configuration**: Three focused config modules instead of one monolithic file
 - **Reusable Utilities**: `ui_helpers.py` and `display_formatters.py` for common patterns
+- **Worker Decomposition**: scan/session/waveform responsibilities split into dedicated services
+- **Typed UI Contract**: queue events are standardized in `ui_events.py` to reduce payload drift
+
+### UI Event Contract (Worker ↔ UI)
+- `tile_update`: `(kind, tile_id, payload)` where payload is a typed dict (`status`, `phase`, `checklist`, `rx_text`, `export_info`, etc.)
+- `cycle_done`: `(kind, tile_id)` end-of-cycle signal for auto-run orchestration
+- Producers use helper constructors from `ui_events.py` (`make_tile_update`, `make_cycle_done`) to keep event shape consistent
 
 ### Adding New Features
 1. **New BLE message**: Add to `protobuf_formatters.py` decoder
@@ -203,7 +221,13 @@ The `.gitignore` file excludes:
 
 ## Version History
 
-- **v9.1** - March 2026 (Current)
+- **v9.2** - March 2026 (Current)
+  - 🧩 UI tabs split into dedicated modules (`demo_tab.py`, `expert_tab.py`, `devices_tab.py`, `settings_tab.py`)
+  - ⚙️ Split worker responsibilities into `ble_worker_services.py` and `ble_waveform_service.py`
+  - 📦 Centralized protobuf imports via `protocol_imports.py`
+  - 🧱 Added typed worker/UI queue contract with `ui_events.py`
+
+- **v9.1** - March 2026
   - 🧹 **Major Refactoring**: Modular architecture for maintainability
   - 📦 Created 6 new modules: `ble_filters`, `display_formatters`, `ble_config`, `ui_config`, `protocol_utils`, `ui_helpers`
   - ♻️ Removed 627 lines of dead code

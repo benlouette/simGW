@@ -25,8 +25,8 @@ def build_ui_expert(app, parent: tk.Frame) -> None:
     form = tk.Frame(filter_in, bg=app.colors["panel"])
     form.pack(fill=tk.X)
 
-    app._build_field(form, "Address prefix", app.address_prefix_var)
-    app._build_field(form, "ADV name contains", app.adv_name_contains_var)
+    build_field(app, form, "Address prefix", app.address_prefix_var)
+    build_field(app, form, "ADV name contains", app.adv_name_contains_var)
 
     manual_card = tk.Frame(parent, bg=app.colors["panel"], highlightbackground=app.colors["border"], highlightthickness=1)
     manual_card.pack(fill=tk.X, padx=16, pady=(0, 12))
@@ -50,7 +50,7 @@ def build_ui_expert(app, parent: tk.Frame) -> None:
     for text_, action_ in MANUAL_ACTIONS:
         btn = ttk.Button(manual_btns, text=text_, width=20, command=lambda a=action_: app._start_manual_action(a))
         buttons.append(btn)
-    app._wrap_buttons(manual_btns, buttons, min_btn_px=180)
+    wrap_buttons(app, manual_btns, buttons, min_btn_px=180)
 
     sep = tk.Frame(manual, bg=app.colors["border"], height=1)
     sep.pack(fill=tk.X, pady=(0, 8))
@@ -62,7 +62,7 @@ def build_ui_expert(app, parent: tk.Frame) -> None:
         ttk.Button(util, text="Clear logs", width=20, command=app._clear_tiles),
         ttk.Button(util, text="Plot Latest", width=20, command=app._plot_latest_waveform),
     ]
-    app._wrap_buttons(util, util_btns, min_btn_px=180)
+    wrap_buttons(app, util, util_btns, min_btn_px=180)
 
     tiles_frame = tk.Frame(parent, bg=app.colors["bg"])
     tiles_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(12, 16))
@@ -81,8 +81,8 @@ def build_ui_expert(app, parent: tk.Frame) -> None:
     app.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-    app.canvas.bind_all("<MouseWheel>", app._on_mouse_wheel)
-    app.canvas.bind_all("<Shift-MouseWheel>", app._on_mouse_wheel)
+    app.canvas.bind_all("<MouseWheel>", lambda event: on_mouse_wheel(app, event))
+    app.canvas.bind_all("<Shift-MouseWheel>", lambda event: on_mouse_wheel(app, event))
 
 
 def wrap_buttons(app, container: tk.Frame, buttons: list, min_btn_px: int = 140) -> None:

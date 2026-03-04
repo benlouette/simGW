@@ -10,7 +10,7 @@ This module contains the SimGwV2App class with a 4-tab interface:
 Architecture:
 - Uses factory pattern (create_app_class) for dependency injection
 - Integrates with BleCycleWorker for async BLE operations
-- Centralized configuration in config.py (colors, phases, constants)
+- Centralized configuration in ble_config.py / ui_config.py / protocol_utils.py
 - Modular data handling via data_exporters and protobuf_formatters
 
 Performance optimizations:
@@ -38,30 +38,19 @@ from ui_config import (
 from ble_config import MEASUREMENT_TYPE_ACCELERATION_TWF
 from data_exporters import WaveformParser
 from ui_helpers import apply_windows_dark_mode, apply_dark_theme
-from ui_tabs.devices_tab import (
+from devices_tab import (
     build_ui_devices,
     devices_scan,
-    devices_populate,
-    devices_on_select,
-    devices_set_details,
 )
-from ui_tabs.settings_tab import build_ui_settings
-from ui_tabs.demo_tab import (
+from settings_tab import build_ui_settings
+from demo_tab import (
     build_ui_demo,
-    demo_clear_debug,
-    demo_reset_ui_state,
-    demo_style_plot_axes,
     demo_plot_waveform_from_raw_export,
     demo_update_timeline,
     demo_set_kpis_from_rx_text,
     demo_render_summary,
 )
-from ui_tabs.expert_tab import (
-    build_ui_expert,
-    wrap_buttons,
-    build_field,
-    on_mouse_wheel,
-)
+from expert_tab import build_ui_expert
 from ui_events import TileUpdatePayload, UiEvent
 WaveformExportTools = WaveformParser
 
@@ -134,9 +123,6 @@ def create_app_class(BleCycleWorker, TileState):
             self.address_prefix_var = tk.StringVar(value="C4:BD:6A:")
             # Optional advertising-content filter (applied in addition to address prefix when set)
             self.adv_name_contains_var = tk.StringVar(value="IMx-1_ELO")
-            self.adv_service_uuid_contains_var = tk.StringVar(value="")
-            self.adv_mfg_id_hex_var = tk.StringVar(value="")  # e.g. "004C" or "0x004C"
-            self.adv_mfg_data_hex_contains_var = tk.StringVar(value="")  # e.g. "01 02" or "0102"
             self.scan_timeout_var = tk.StringVar(value="60")
             self.rx_timeout_var = tk.StringVar(value="5")
             self.record_sessions_var = tk.BooleanVar(value=True)
@@ -176,17 +162,6 @@ def create_app_class(BleCycleWorker, TileState):
                 pass
     
         
-        def _demo_clear_debug(self) -> None:
-            """Clear the Demo debug console."""
-            demo_clear_debug(self)
-    
-    
-        def _demo_reset_ui_state(self, keep_debug: bool = True) -> None:
-            """Reset Demo tab UI state (KPIs, timeline, summary, plot)."""
-            demo_reset_ui_state(self, keep_debug=keep_debug)
-    
-    
-    
         def _ui_build_run_header_card(self, parent: tk.Widget) -> tuple:
             """Build the standard header (used in Demo and Expert) with Start Auto / Stop and run-state labels."""
             card = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
@@ -220,36 +195,6 @@ def create_app_class(BleCycleWorker, TileState):
     
             return card, start_btn, stop_btn
     
-        def _build_ui_demo(self, parent: tk.Frame) -> None:
-            build_ui_demo(self, parent)
-    
-    
-        def _demo_style_plot_axes(self, ax) -> None:
-            """Apply dark-theme styling to the embedded matplotlib axes."""
-            demo_style_plot_axes(self, ax)
-    
-        def _demo_plot_waveform_from_raw_export(self, raw_path: str) -> None:
-            """Render waveform in the embedded Demo matplotlib canvas from a raw export .bin file."""
-            demo_plot_waveform_from_raw_export(self, raw_path)
-    
-    
-        def _build_ui_devices(self, parent: tk.Frame) -> None:
-            build_ui_devices(self, parent)
-
-        def _build_ui_settings(self, parent: tk.Frame) -> None:
-            build_ui_settings(self, parent)
-        
-        def _devices_scan(self) -> None:
-            devices_scan(self)
-
-        def _devices_populate(self, pairs):
-            devices_populate(self, pairs)
-        def _devices_on_select(self, _evt):
-            devices_on_select(self, _evt)
-        def _devices_set_details(self, txt: str):
-            """Legacy method - now delegated to ui_tabs.devices_tab."""
-            devices_set_details(self, txt)
-    
         def _build_ui(self) -> None:
             """Build a 4-tab UI (Demo / Expert / Devices / Settings) without changing backend logic."""
             nb = ttk.Notebook(self.root)
@@ -272,10 +217,10 @@ def create_app_class(BleCycleWorker, TileState):
             # Add logo overlay in tab bar area (top-right corner)
             self._add_logo_to_tab_bar()
     
-            self._build_ui_demo(demo_tab)
-            self._build_ui_expert(expert_tab)
-            self._build_ui_devices(devices_tab)
-            self._build_ui_settings(settings_tab)
+            build_ui_demo(self, demo_tab)
+            build_ui_expert(self, expert_tab)
+            build_ui_devices(self, devices_tab)
+            build_ui_settings(self, settings_tab)
     
         def _add_logo_to_tab_bar(self) -> None:
             """Add SKF logo overlay in the tab bar area (top-right corner)."""
@@ -322,31 +267,6 @@ def create_app_class(BleCycleWorker, TileState):
                 # Silently fail if PIL not available or image loading fails
                 print(f"Could not load logo: {e}")
     
-        def _demo_update_timeline(self, checklist_update: Dict[str, str]) -> None:
-            """Update the Demo timeline dots based on the merged checklist state."""
-            demo_update_timeline(self, checklist_update)
-    
-        def _demo_set_kpis_from_rx_text(self, rx_text: str, export_info: Optional[dict]) -> None:
-            """Update Demo KPIs (Overall/Waveform) based on the latest received message text."""
-            demo_set_kpis_from_rx_text(self, rx_text, export_info)
-    
-        def _demo_render_summary(self, rx_text: str, overall_values: Optional[list] = None) -> None:
-            """Render the Demo 'Overalls' panel."""
-            demo_render_summary(self, rx_text, overall_values=overall_values)
-    
-        def _build_ui_expert(self, parent: tk.Frame) -> None:
-            build_ui_expert(self, parent)
-    
-        def _wrap_buttons(self, container: tk.Frame, buttons: list, min_btn_px: int = 140) -> None:
-            """Lay out a list of buttons into a responsive wrapping grid."""
-            wrap_buttons(self, container, buttons, min_btn_px=min_btn_px)
-    
-        def _build_field(self, parent: tk.Frame, label: str, variable: tk.StringVar, width: int = 16) -> None:
-            build_field(self, parent, label, variable, width=width)
-    
-        def _on_mouse_wheel(self, event: tk.Event) -> None:
-            on_mouse_wheel(self, event)
-    
         def _parse_int_var(self, var: tk.StringVar, default: int) -> int:
             try:
                 return int(var.get())
@@ -367,16 +287,13 @@ def create_app_class(BleCycleWorker, TileState):
             record_sessions = bool(self.record_sessions_var.get())
             session_root = self.session_root_var.get().strip() or "sessions"
             name_contains = self.adv_name_contains_var.get().strip()
-            service_uuid_contains = self.adv_service_uuid_contains_var.get().strip()
-            mfg_id_hex = self.adv_mfg_id_hex_var.get().strip()
-            mfg_data_hex_contains = self.adv_mfg_data_hex_contains_var.get().strip()
             # Parse TWF type (extract first number from "5 - Acceleration TWF" format)
             twf_type_str = self.twf_type_var.get().strip()
             try:
                 twf_type = int(twf_type_str.split()[0]) if twf_type_str else MEASUREMENT_TYPE_ACCELERATION_TWF
             except (ValueError, IndexError):
                 twf_type = MEASUREMENT_TYPE_ACCELERATION_TWF
-            return address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type
+            return address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, twf_type
     
         def _safe_destroy(self, widget) -> None:
             if widget is None:
@@ -455,11 +372,11 @@ def create_app_class(BleCycleWorker, TileState):
             return tile_id
     
         def _start_worker_cycle(self, tile_id: int, action: str = None) -> None:
-            address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type = self._read_runtime_params()
+            address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, twf_type = self._read_runtime_params()
             if action is None:
-                self.worker.run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type)
+                self.worker.run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, twf_type)
             else:
-                self.worker.run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type)
+                self.worker.run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root, name_contains, twf_type)
     
         def _on_start(self) -> None:
             self._reset_auto_state()
@@ -775,11 +692,11 @@ def create_app_class(BleCycleWorker, TileState):
                 n_samples = meta.get("samples", len(y))
                 data_type = meta.get("data_type", "S16")
                 twf_type = meta.get("twf_type", "Unknown")
+                fs_label = f"{int(fs)} Hz" if fs > 0.0 else "n/a"
                 
                 # Build informative title
                 title_parts = [f"{n_samples} samples"]
-                if fs > 0.0:
-                    title_parts.append(f"{int(fs)} Hz")
+                title_parts.append(f"Sampling rate: {fs_label}")
                 title_parts.append(data_type)
                 title_parts.append(twf_type)
                 plot_title = " • ".join(title_parts)
@@ -839,7 +756,7 @@ def create_app_class(BleCycleWorker, TileState):
             if getattr(self, "_devices_autoscan_job", None) is not None:
                 return
             # Kick one scan immediately, then every interval
-            self._devices_scan()
+            devices_scan(self)
             self._devices_autoscan_job = self.root.after(self._devices_autoscan_interval_ms, self._devices_autoscan_tick)
     
         def _devices_autoscan_stop(self):
@@ -861,7 +778,7 @@ def create_app_class(BleCycleWorker, TileState):
                     return
             except Exception:
                 return
-            self._devices_scan()
+            devices_scan(self)
             self._devices_autoscan_job = self.root.after(self._devices_autoscan_interval_ms, self._devices_autoscan_tick)
     
         def _poll_queue(self) -> None:
@@ -951,7 +868,7 @@ def create_app_class(BleCycleWorker, TileState):
                     display_text = '\n'.join(filtered_lines).strip()
                     tile["overall"].configure(text=display_text)
                 else:
-                    # Use legacy formatted overall_values
+                    # Fallback to compact rendering from structured overall_values
                     ov_txt = self._format_overalls_compact(st.overall_values, max_lines=8)
                     tile["overall"].configure(text=ov_txt)
             except Exception:
@@ -1026,7 +943,7 @@ def create_app_class(BleCycleWorker, TileState):
                     addr_txt = tile.get("address").cget("text") if tile.get("address") else ""
                     self.demo_device_var.set((name_txt + " " + addr_txt).strip())
                     if st.checklist:
-                        self._demo_update_timeline(st.checklist)
+                        demo_update_timeline(self, st.checklist)
                 except Exception:
                     pass
                 return
@@ -1040,10 +957,10 @@ def create_app_class(BleCycleWorker, TileState):
     
                 # timeline
                 if st.checklist:
-                    self._demo_update_timeline(st.checklist)
+                    demo_update_timeline(self, st.checklist)
     
                 # KPIs driven by structured info + rx_text only for display
-                self._demo_set_kpis_from_rx_text(st.rx_text or "", st.export_info if st.export_info else None)
+                demo_set_kpis_from_rx_text(self, st.rx_text or "", st.export_info if st.export_info else None)
     
                 # Overalls: driven only by structured overall_values
                 if st.overall_values is not None:
@@ -1061,7 +978,7 @@ def create_app_class(BleCycleWorker, TileState):
                         self._demo_last_plotted_raw = raw_path
                         try:
                             self.demo_plot_label.config(text="Rendering waveform...")
-                            self._demo_plot_waveform_from_raw_export(raw_path)
+                            demo_plot_waveform_from_raw_export(self, raw_path)
                             self.demo_waveform_var.set("Waveform received")
                         except Exception as e:
                             self.demo_plot_label.config(text=f"(plot error: {type(e).__name__})")
@@ -1071,7 +988,7 @@ def create_app_class(BleCycleWorker, TileState):
                                 pass
     
                 # Summary: show overall values + last RX text (human readable)
-                self._demo_render_summary(st.rx_text or "", st.overall_values)
+                demo_render_summary(self, st.rx_text or "", st.overall_values)
     
             except Exception as e:
                 try:
