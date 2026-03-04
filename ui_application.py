@@ -46,6 +46,7 @@ from config import (
     MEASUREMENT_TYPE_ACCELERATION_TWF, MEASUREMENT_TYPE_VELOCITY_TWF, 
     MEASUREMENT_TYPE_ENVELOPER3_TWF
 )
+from ble_filters import adv_matches as ble_adv_matches, format_adv_details as ble_format_adv_details
 from data_exporters import WaveformParser
 WaveformExportTools = WaveformParser
 
@@ -106,7 +107,6 @@ def create_app_class(BleCycleWorker, TileState):
             # Devices tab state
             self.devices_tree = None
             self.devices_detail = None
-            self._devices_last_scan = []
             self.devices_scan_status_var = tk.StringVar(value="Ready")
             self._devices_scan_in_progress = False  # Prevent concurrent scans
 
@@ -737,8 +737,6 @@ def create_app_class(BleCycleWorker, TileState):
             self.devices_detail.insert("1.0", "Waiting for scan...\nDevices will appear automatically.\nSelect a device to see details.")
             self.devices_detail.configure(state=tk.DISABLED)
 
-            self._devices_last_scan = []  # list of (device, adv)
-
         def _build_ui_settings(self, parent: tk.Frame) -> None:
             header = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
             header.pack(fill=tk.X, padx=16, pady=(16, 10))
@@ -859,7 +857,7 @@ def create_app_class(BleCycleWorker, TileState):
                 if not addr:
                     continue
     
-                ok = self._adv_matches(dev, adv, addr_prefix, name_contains, svc_contains, mfg_id_hex, mfg_data_hex)
+                ok = ble_adv_matches(dev, adv, addr_prefix, name_contains, svc_contains, mfg_id_hex, mfg_data_hex)
                 
                 # Skip devices that don't match filters
                 if not ok:
@@ -928,7 +926,7 @@ def create_app_class(BleCycleWorker, TileState):
                 return
             dev = item.get("dev")
             adv = item.get("adv")
-            txt = self._format_adv_details(dev, adv)
+            txt = ble_format_adv_details(dev, adv)
             # Display device details (don't use _devices_set_details to avoid confusion)
             self.devices_detail.configure(state=tk.NORMAL)
             self.devices_detail.delete("1.0", tk.END)
@@ -940,167 +938,6 @@ def create_app_class(BleCycleWorker, TileState):
             self.devices_detail.delete("1.0", tk.END)
             self.devices_detail.insert("1.0", txt)
             self.devices_detail.configure(state=tk.DISABLED)
-    
-        def _devices_copy_details(self):
-            try:
-                txt = self.devices_detail.get("1.0", tk.END)
-                self._tk_root.clipboard_clear()
-                self._tk_root.clipboard_append(txt)
-            except Exception:
-                pass
-    
-        def _format_adv_details(self, device, adv) -> str:
-            lines = []
-            lines.append("=" * 60)
-            lines.append(f"📱 DEVICE INFORMATION")
-            lines.append("=" * 60)
-            lines.append(f"Address:     {getattr(device, 'address', device)}")
-            lines.append(f"Name:        {getattr(device, 'name', '') or '(unnamed)'}")
-            
-            if adv is None:
-                lines.append("No AdvertisingData available.")
-                return "\n".join(lines)
-    
-            lines.append("")
-            lines.append("=" * 60)
-            lines.append(f"📡 ADVERTISING DATA")
-            lines.append("=" * 60)
-            lines.append(f"Local name:  {getattr(adv, 'local_name', None) or '(not set)'}")
-            lines.append(f"RSSI:        {getattr(adv, 'rssi', None)} dBm")
-            
-            tx = getattr(adv, 'tx_power', None)
-            lines.append(f"TX power:    {tx if tx is not None else '(not advertised)'}")
-            
-            # Platform data (if any)
-            platform = getattr(adv, 'platform_data', None)
-            if platform:
-                lines.append(f"Platform:    {platform}")
-            
-            lines.append("")
-            
-            # Service UUIDs
-            su = getattr(adv, "service_uuids", None) or []
-            if su:
-                lines.append(f"🔧 SERVICE UUIDs ({len(su)}):")
-                for u in su:
-                    # Try to show short UUID for standard services
-                    if len(u) > 8:
-                        lines.append(f"  • {u}")
-                    else:
-                        lines.append(f"  • {u} (short)")
-            else:
-                lines.append("🔧 SERVICE UUIDs: (none)")
-            
-            lines.append("")
-            
-            # Manufacturer data with known IDs
-            md = getattr(adv, "manufacturer_data", None) or {}
-            if md:
-                lines.append(f"🏭 MANUFACTURER DATA ({len(md)} entries):")
-                
-                # Known manufacturer IDs
-                known_mfg = {
-                    0x004C: "Apple Inc.",
-                    0x0059: "Nordic Semiconductor ASA",
-                    0x006A: "Abbott Diabetes Care",
-                    0x0075: "Samsung Electronics Co. Ltd.",
-                    0x00E0: "Google LLC",
-                    0x0087: "Garmin International, Inc.",
-                    0x0157: "Huawei Technologies Co., Ltd.",
-                }
-                
-                for k, v in md.items():
-                    vv = bytes(v) if not isinstance(v, (bytes, bytearray)) else v
-                    mfg_name = known_mfg.get(k, "Unknown")
-                    lines.append(f"  • ID: 0x{k:04X} ({mfg_name})")
-                    lines.append(f"    Data: {vv.hex().upper()}")
-                    lines.append(f"    Len:  {len(vv)} bytes")
-            else:
-                lines.append("🏭 MANUFACTURER DATA: (none)")
-            
-            lines.append("")
-            
-            # Service data
-            sd = getattr(adv, "service_data", None) or {}
-            if sd:
-                lines.append(f"🔐 SERVICE DATA ({len(sd)} entries):")
-                for k, v in sd.items():
-                    vv = bytes(v) if not isinstance(v, (bytes, bytearray)) else v
-                    lines.append(f"  • UUID: {k}")
-                    lines.append(f"    Data: {vv.hex().upper()}")
-                    lines.append(f"    Len:  {len(vv)} bytes")
-            else:
-                lines.append("🔐 SERVICE DATA: (none)")
-            
-            lines.append("")
-            lines.append("=" * 60)
-            
-            return "\n".join(lines)
-    
-        def _adv_matches(self, dev, adv, addr_prefix: str, name_contains: str, svc_contains: str, mfg_id_hex: str, mfg_data_hex: str) -> bool:
-            # Mirrors the filtering used in the BLE loop; safe for missing fields.
-            addr_prefix = (addr_prefix or "").strip().upper()
-            if addr_prefix:
-                addr = (getattr(dev, "address", "") if not isinstance(dev, str) else str(dev)).upper()
-                if not addr.startswith(addr_prefix):
-                    return False
-    
-            if not adv:
-                # If no adv data, only address prefix can match.
-                return True if addr_prefix else False
-    
-            if name_contains:
-                n = (getattr(adv, "local_name", "") or "") + " " + (getattr(dev, "name", "") or "")
-                if name_contains.lower() not in n.lower():
-                    return False
-    
-            if svc_contains:
-                su = getattr(adv, "service_uuids", None) or []
-                if not any(svc_contains.lower() in (u or "").lower() for u in su):
-                    return False
-    
-            mfg_id_hex = (mfg_id_hex or "").strip().lower().replace("0x", "")
-            mfg_data_hex = (mfg_data_hex or "").strip().lower().replace("0x", "")
-    
-            if mfg_id_hex:
-                try:
-                    want_id = int(mfg_id_hex, 16)
-                except ValueError:
-                    want_id = None
-                if want_id is not None:
-                    md = getattr(adv, "manufacturer_data", None) or {}
-                    if want_id not in md:
-                        return False
-                    if mfg_data_hex:
-                        sub = "".join(ch for ch in mfg_data_hex if ch in "0123456789abcdef")
-                        try:
-                            sub_b = bytes.fromhex(sub)
-                        except ValueError:
-                            sub_b = b""
-                        if sub_b:
-                            vv = bytes(md[want_id]) if not isinstance(md[want_id], (bytes, bytearray)) else md[want_id]
-                            if sub_b not in vv:
-                                return False
-            else:
-                if mfg_data_hex:
-                    # if data specified but no id, match any mfg value containing it
-                    sub = "".join(ch for ch in mfg_data_hex if ch in "0123456789abcdef")
-                    try:
-                        sub_b = bytes.fromhex(sub)
-                    except ValueError:
-                        sub_b = b""
-                    if sub_b:
-                        md = getattr(adv, "manufacturer_data", None) or {}
-                        found = False
-                        for _k, v in md.items():
-                            vv = bytes(v) if not isinstance(v, (bytes, bytearray)) else v
-                            if sub_b in vv:
-                                found = True
-                                break
-                        if not found:
-                            return False
-    
-            return True
     
         def _build_ui(self) -> None:
             """Build a 4-tab UI (Demo / Expert / Devices / Settings) without changing backend logic."""
@@ -1201,43 +1038,6 @@ def create_app_class(BleCycleWorker, TileState):
     
                 dot.configure(fg=fg)
                 txt.configure(fg=tfg)
-    
-        def _demo_extract_key_metrics(self, rx_text: str) -> Dict[str, str]:
-            """Best-effort extraction of a few key metrics from protobuf text output."""
-            if not rx_text:
-                return {}
-    
-            # Remove HEX and EXPORT lines
-            lines = []
-            for ln in (rx_text or "").splitlines():
-                if ln.startswith("HEX:") or ln.startswith("EXPORT"):
-                    continue
-                lines.append(ln)
-            s = "\n".join(lines)
-    
-            def _find_after(token: str) -> Optional[str]:
-                # Find token, then look ahead for the first numeric value in the next ~10 lines
-                m = re.search(re.escape(token), s)
-                if not m:
-                    return None
-                tail = s[m.end():]
-                tail_lines = tail.splitlines()[:10]
-                tail2 = "\n".join(tail_lines)
-                m2 = re.search(r"([-+]?\d+(?:\.\d+)?)", tail2)
-                return m2.group(1) if m2 else None
-    
-            out = {}
-            # These tokens are based on Common_pb2 enum names as they appear in text_format output.
-            temp = _find_after("ENVIROMENTAL_TEMPERATURE_CURRENT")
-            hum = _find_after("ENVIROMENTAL_HUMIDITY_CURRENT")
-            volt = _find_after("VOLTAGE_CURRENT")
-            if temp is not None:
-                out["Temperature"] = f"{temp}"
-            if hum is not None:
-                out["Humidity"] = f"{hum}"
-            if volt is not None:
-                out["Voltage"] = f"{volt}"
-            return out
     
         def _demo_set_kpis_from_rx_text(self, rx_text: str, export_info: Optional[dict]) -> None:
             """Update Demo KPIs (Overall/Waveform) based on the latest received message text."""
@@ -1362,63 +1162,6 @@ def create_app_class(BleCycleWorker, TileState):
     
             self.demo_summary.insert(tk.END, header)
             self.demo_summary.insert(tk.END, "\n".join(lines) + "\n")
-            self.demo_summary.configure(state=tk.DISABLED)
-    
-        
-        def _demo_render_summary_combined(self) -> None:
-            """Render Demo summary with two sections: Overall values + Waveform info (if available)."""
-            if self.demo_summary is None:
-                return
-    
-            overall_values = self.demo_last_overall_values or []
-            overall_txt = self.demo_last_overall_rx_text or ""
-            wave_txt = self.demo_last_wave_rx_text or ""
-    
-            total_block = None
-            if wave_txt:
-                m2 = re.search(r"\btotal_block:\s*(\d+)", wave_txt)
-                if m2:
-                    try:
-                        total_block = int(m2.group(1))
-                    except Exception:
-                        total_block = None
-    
-            self.demo_summary.configure(state=tk.NORMAL)
-            self.demo_summary.delete("1.0", tk.END)
-    
-            self.demo_summary.insert(tk.END, "Overall\n", ("h",))
-            if overall_values:
-                self.demo_summary.insert(tk.END, f"{len(overall_values)} values\n", ("v",))
-                for item in overall_values:
-                    try:
-                        lbl = str(item.get("label", "")).strip()
-                        val = str(item.get("value", "")).strip()
-                    except Exception:
-                        lbl, val = "", ""
-                    if not lbl:
-                        lbl = "Value"
-                    if not val:
-                        val = "•"
-                    self.demo_summary.insert(tk.END, f"• {lbl}: ", ("k",))
-                    self.demo_summary.insert(tk.END, f"{val}\n", ("v",))
-            else:
-                if overall_txt:
-                    pairs = len(re.findall(r"\bdata_pair\s*\{", overall_txt))
-                    self.demo_summary.insert(tk.END, f"{pairs} pairs\n", ("v",))
-                else:
-                    self.demo_summary.insert(tk.END, "•\n", ("v",))
-    
-            self.demo_summary.insert(tk.END, "\nWaveform\n", ("h",))
-            if wave_txt:
-                blocks = total_block if total_block is not None else "?"
-                pts = (total_block * 64) if isinstance(total_block, int) else "?"
-                self.demo_summary.insert(tk.END, "Blocks: ", ("k",))
-                self.demo_summary.insert(tk.END, f"{blocks}\n", ("v",))
-                self.demo_summary.insert(tk.END, "Points: ", ("k",))
-                self.demo_summary.insert(tk.END, f"{pts} (int16)\n", ("v",))
-            else:
-                self.demo_summary.insert(tk.END, "•\n", ("v",))
-    
             self.demo_summary.configure(state=tk.DISABLED)
     
         def _build_ui_expert(self, parent: tk.Frame) -> None:
@@ -2291,220 +2034,7 @@ def create_app_class(BleCycleWorker, TileState):
                     self._log("ERROR", f"Demo mirror update failed: {type(e).__name__}: {e}")
                 except Exception:
                     pass
-    
-        def _on_dump_adv(self) -> None:
-            """Scan and display advertising data in a readable window."""
-            # Disable button while scanning
-            try:
-                self.dump_adv_button.configure(state="disabled")
-            except Exception:
-                pass
-    
-            address_prefix, _mtu, scan_timeout, _rx_timeout, _record_sessions, _session_root, name_contains, svc_contains, mfg_id_hex, mfg_data_hex, _twf_type = self._read_runtime_params()
-    
-            # Normalize filters
-            addr_prefix = (address_prefix or "").strip().upper()
-            name_contains = (name_contains or "").strip()
-            svc_contains = (svc_contains or "").strip().lower()
-    
-            mfg_id = None
-            mfg_id_hex = (mfg_id_hex or "").strip().lower()
-            if mfg_id_hex:
-                mfg_id_hex = mfg_id_hex.replace("0x", "")
-                try:
-                    mfg_id = int(mfg_id_hex, 16)
-                except ValueError:
-                    mfg_id = None
-    
-            mfg_data_sub = b""
-            mfg_data_hex = (mfg_data_hex or "").strip().lower().replace("0x", "")
-            if mfg_data_hex:
-                mfg_data_hex = "".join(ch for ch in mfg_data_hex if ch in "0123456789abcdef")
-                try:
-                    mfg_data_sub = bytes.fromhex(mfg_data_hex)
-                except ValueError:
-                    mfg_data_sub = b""
-    
-            # Create window immediately
-            win = tk.Toplevel(self._tk_root)
-            win.title("Advertising dump")
-            win.geometry("980x700")
-            win.configure(bg=self.colors["bg"])
-    
-            header = tk.Frame(win, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            header.pack(fill=tk.X, padx=12, pady=12)
-    
-            tk.Label(header, text="Advertising dump", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 2))
-            tk.Label(header, text="Scan running...").pack(anchor="w", padx=12, pady=(0, 10))
-    
-            body = tk.Frame(win, bg=self.colors["bg"])
-            body.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
-    
-            text = tk.Text(body, wrap="none", bg=self.colors["panel_alt"], fg=self.colors["text"], insertbackground=self.colors["text"])
-            text.pack(fill=tk.BOTH, expand=True)
-    
-            btns = tk.Frame(win, bg=self.colors["bg"])
-            btns.pack(fill=tk.X, padx=12, pady=(0, 12))
-    
-            def _copy():
-                try:
-                    data = text.get("1.0", tk.END)
-                    self.root.clipboard_clear()
-                    self.root.clipboard_append(data)
-                except Exception:
-                    pass
-    
-            ttk.Button(btns, text="Copy", command=_copy).pack(side=tk.LEFT)
-    
-            async def _scan_adv():
-                from bleak import BleakScanner
-                res = await BleakScanner.discover(timeout=scan_timeout, return_adv=True)
-                pairs = []
-                if isinstance(res, dict):
-                    for _addr, val in res.items():
-                        if isinstance(val, tuple) and len(val) == 2:
-                            dev, adv = val
-                        else:
-                            dev, adv = val, None
-                        pairs.append((dev, adv))
-                elif isinstance(res, list):
-                    for item in res:
-                        if isinstance(item, tuple) and len(item) == 2:
-                            dev, adv = item
-                        else:
-                            dev, adv = item, None
-                        pairs.append((dev, adv))
-                return pairs
-    
-            def _matches(dev, adv) -> bool:
-                # Address prefix
-                addr = ""
-                if isinstance(dev, str):
-                    addr = dev
-                else:
-                    addr = getattr(dev, "address", "") or ""
-                addr_u = addr.upper()
-                if addr_prefix and not addr_u.startswith(addr_prefix):
-                    return False
-    
-                # Name contains
-                if name_contains:
-                    n1 = (getattr(dev, "name", "") or "") if not isinstance(dev, str) else ""
-                    n2 = (getattr(adv, "local_name", "") or "") if adv is not None else ""
-                    combo = (n1 + " " + n2).lower()
-                    if name_contains.lower() not in combo:
-                        return False
-    
-                # Service UUID contains
-                if svc_contains:
-                    uus = []
-                    if adv is not None and getattr(adv, "service_uuids", None):
-                        uus = list(getattr(adv, "service_uuids", []) or [])
-                    joined = " ".join(u.lower() for u in uus)
-                    if svc_contains not in joined:
-                        return False
-    
-                # Manufacturer data filters
-                if mfg_id is not None or mfg_data_sub:
-                    md = getattr(adv, "manufacturer_data", None) if adv is not None else None
-                    md = md or {}
-                    if mfg_id is not None:
-                        if mfg_id not in md:
-                            return False
-                        if mfg_data_sub:
-                            payload = bytes(md.get(mfg_id, b"")) if md.get(mfg_id) is not None else b""
-                            if mfg_data_sub not in payload:
-                                return False
-                    else:
-                        # mfg id not specified: match any payload containing substring
-                        if mfg_data_sub:
-                            ok = False
-                            for _k, _v in md.items():
-                                payload = bytes(_v) if _v is not None else b""
-                                if mfg_data_sub in payload:
-                                    ok = True
-                                    break
-                            if not ok:
-                                return False
-    
-                return True
-    
-            def _render(pairs):
-                # Sort by RSSI when available
-                def rssi_of(item):
-                    _dev, _adv = item
-                    r = getattr(_adv, "rssi", None) if _adv is not None else None
-                    return r if isinstance(r, int) else -999
-                pairs2 = [p for p in pairs if _matches(p[0], p[1])]
-                pairs2.sort(key=rssi_of, reverse=True)
-    
-                lines = []
-                lines.append(f"Filters: addr_prefix={addr_prefix or '-'} name_contains={name_contains or '-'} svc_contains={svc_contains or '-'} mfg_id={('0x%04X'%mfg_id) if mfg_id is not None else '-'} mfg_data_sub={(mfg_data_sub.hex() if mfg_data_sub else '-')}")
-                lines.append("")
-    
-                for dev, adv in pairs2:
-                    if isinstance(dev, str):
-                        addr = dev
-                        name = "<?>"
-                    else:
-                        addr = getattr(dev, "address", "") or ""
-                        name = getattr(dev, "name", "") or "<?>"
-    
-                    local_name = getattr(adv, "local_name", None) if adv is not None else None
-                    rssi = getattr(adv, "rssi", None) if adv is not None else None
-                    tx = getattr(adv, "tx_power", None) if adv is not None else None
-                    svcs = getattr(adv, "service_uuids", None) if adv is not None else None
-                    svcs = svcs or []
-                    md = getattr(adv, "manufacturer_data", None) if adv is not None else None
-                    md = md or {}
-                    sd = getattr(adv, "service_data", None) if adv is not None else None
-                    sd = sd or {}
-    
-                    lines.append("=" * 72)
-                    lines.append(f"Address: {addr}")
-                    lines.append(f"Name   : {name}")
-                    if local_name:
-                        lines.append(f"Local  : {local_name}")
-                    lines.append(f"RSSI   : {rssi}")
-                    lines.append(f"TX Pwr : {tx}")
-                    if svcs:
-                        lines.append("Service UUIDs:")
-                        for u in svcs:
-                            lines.append(f"  - {u}")
-                    if md:
-                        lines.append("Manufacturer data:")
-                        for k, v in md.items():
-                            payload = bytes(v) if v is not None else b""
-                            lines.append(f"  - 0x{k:04X}: {payload.hex()}")
-                    if sd:
-                        lines.append("Service data:")
-                        for k, v in sd.items():
-                            payload = bytes(v) if v is not None else b""
-                            lines.append(f"  - {k}: {payload.hex()}")
-                lines.append("=" * 72)
-                lines.append(f"Matched devices: {len(pairs2)}")
-    
-                text.delete("1.0", tk.END)
-                text.insert(tk.END, "\n".join(lines))
-                text.see("1.0")
-    
-                try:
-                    self.dump_adv_button.configure(state="normal")
-                except Exception:
-                    pass
-    
-            def thread_main():
-                try:
-                    pairs = asyncio.run(_scan_adv())
-                except Exception as e:
-                    pairs = []
-                    self.root.after(0, lambda: text.insert(tk.END, f"Scan failed: {e}\n"))
-                self.root.after(0, lambda: _render(pairs))
-    
-            threading.Thread(target=thread_main, daemon=True).start()
-    
-    
-    
-    
 
-    return SimGwV2App
+
+    return SimGwV2App    
+

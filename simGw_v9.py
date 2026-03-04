@@ -4,17 +4,17 @@ import re
 import sys
 import threading
 import time
-import tkinter as tk
 from dataclasses import dataclass
-from queue import Queue, Empty
-from tkinter import ttk, messagebox
+from queue import Queue
 from typing import Dict, Optional
 
 from bleak import BleakClient, BleakScanner
 
 # Refactored: centralized modules
 from ble_session_helpers import BleSessionHelpers
+from ble_filters import adv_matches as ble_adv_matches
 from protobuf_formatters import ProtobufFormatter, OverallValuesExtractor
+from display_formatters import format_session_and_overall_text, format_rx_summary
 from data_exporters import WaveformExporter, WaveformParser
 from session_recorder import SessionRecorder
 from config import (
@@ -27,18 +27,6 @@ from config import (
     _uuid_from_bytes, _get_uart_uuids, _PHASE_ORDER
 )
 
-try:
-    import matplotlib.pyplot as plt
-    from matplotlib.figure import Figure
-    try:
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-    except Exception:
-        FigureCanvasTkAgg = None
-except Exception:
-    plt = None
-    Figure = None
-    FigureCanvasTkAgg = None
-
 # Add PROTOCOL_DIR to sys.path for protobuf imports
 if PROTOCOL_DIR not in sys.path:
     sys.path.insert(0, PROTOCOL_DIR)
@@ -50,18 +38,6 @@ import command_pb2
 import common_pb2
 import configuration_pb2
 import fota_pb2
-
-# REFACTORED: WaveformExportTools replaced by WaveformParser from data_exporters module  
-# Keep alias for backward compatibility
-WaveformExportTools = WaveformParser
-
-
-@dataclass
-class TileStatus:
-    address: str = "•"
-    status: str = "Queued"
-    rx_text: str = ""
-
 
 
 @dataclass
@@ -185,278 +161,14 @@ class BleCycleWorker:
         self._call_soon(self._run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root,
                         name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains, twf_type))
 
-    def _adv_matches(self, device, adv, address_prefix: str, name_contains: str, service_uuid_contains: str,
-                    mfg_id_hex: str, mfg_data_hex_contains: str) -> bool:
-        """
-        Match a device against address prefix + optional advertising-content filters.
-        All non-empty filters must match.
-        """
-        try:
-            addr = (getattr(device, "address", "") or "").upper()
-        except Exception:
-            addr = ""
-        if address_prefix:
-            if not addr.startswith(address_prefix.upper()):
-                return False
-
-        # Name filter (device.name or adv.local_name)
-        if name_contains:
-            nc = name_contains.lower()
-            dn = (getattr(device, "name", None) or "").lower()
-            aln = (getattr(adv, "local_name", None) if adv is not None else None) or ""
-            if (nc not in dn) and (nc not in aln.lower()):
-                return False
-
-        # Service UUID contains (substring match on any advertised UUID)
-        if service_uuid_contains:
-            svc_sub = service_uuid_contains.lower()
-            uuids = []
-            if adv is not None:
-                uuids = list(getattr(adv, "service_uuids", None) or [])
-            if not any(svc_sub in (u or "").lower() for u in uuids):
-                return False
-
-        # Manufacturer ID + data filters
-        if mfg_id_hex or mfg_data_hex_contains:
-            mfg = {}
-            if adv is not None:
-                mfg = getattr(adv, "manufacturer_data", None) or {}
-
-            # normalize mfg id
-            mfg_id = None
-            if mfg_id_hex:
-                s = mfg_id_hex.strip().lower().replace("0x", "")
-                try:
-                    mfg_id = int(s, 16)
-                except ValueError:
-                    # invalid filter -> no match
-                    return False
-                if mfg_id not in mfg:
-                    return False
-
-            if mfg_data_hex_contains:
-                needle = mfg_data_hex_contains.strip().lower().replace("0x", "").replace(" ", "")
-                # allow commas
-                needle = needle.replace(",", "")
-                if needle:
-                    found = False
-                    items = mfg.items() if mfg_id is None else [(mfg_id, mfg.get(mfg_id, b""))]
-                    for _, v in items:
-                        vb = bytes(v) if not isinstance(v, (bytes, bytearray)) else bytes(v)
-                        h = vb.hex().lower()
-                        if needle in h:
-                            found = True
-                            break
-                    if not found:
-                        return False
-
-        return True
-
-    def _format_rx_payload(self, payload: bytes) -> str:
-        """REFACTORED: Wrapper to ProtobufFormatter."""
-        return ProtobufFormatter.format_payload_readable(payload)
-
-    def _pb_message_type(self, payload: bytes) -> str:
-        """REFACTORED: Wrapper to ProtobufFormatter."""
-        return ProtobufFormatter.get_message_type(payload)
-
-    def _hex_short(self, payload: bytes, max_len: int = 48) -> str:
-        """REFACTORED: Wrapper to ProtobufFormatter."""
-        return ProtobufFormatter.hex_short(payload, max_len)
-
-
-    def _extract_waveform_sample_rows(self, app_msg) -> list:
-        """REFACTORED: Wrapper to ProtobufFormatter."""
-        return ProtobufFormatter.extract_waveform_sample_rows(app_msg)
-
-    def _pretty_field_name(self, name: str) -> str:
-        """Humanize proto field names like 'acc_rms_mg' -> 'Acc rms mg'."""
-        if not name:
-            return ""
-        return name.replace("_", " ").strip().capitalize()
-
-    def _format_nested_message(self, msg) -> str:
-        """
-        Format a nested protobuf message into a short, demo-friendly 'A: 1.2, B: 3.4' string.
-        Only includes scalar/enum/string fields (no bytes blobs).
-        """
-        parts = []
-        try:
-            for fd, v in msg.ListFields():
-                # skip internal-ish fields
-                if fd.name in ("measure_type", "measurement_type", "type"):
-                    continue
-                if fd.label == fd.LABEL_REPEATED:
-                    try:
-                        n = len(v)
-                    except Exception:
-                        n = 0
-                    if n == 0:
-                        continue
-                    # show small vectors nicely if they look like XYZ
-                    if n <= 6 and all(isinstance(x, (int, float, bool)) for x in v):
-                        parts.append(f"{self._pretty_field_name(fd.name)}: " + ", ".join(str(x) for x in v))
-                    else:
-                        parts.append(f"{self._pretty_field_name(fd.name)}: {n} values")
-                    continue
-
-                # scalar / enum / string
-                if fd.cpp_type in (fd.CPPTYPE_INT32, fd.CPPTYPE_INT64, fd.CPPTYPE_UINT32, fd.CPPTYPE_UINT64,
-                                   fd.CPPTYPE_FLOAT, fd.CPPTYPE_DOUBLE, fd.CPPTYPE_BOOL):
-                    parts.append(f"{self._pretty_field_name(fd.name)}: {v}")
-                elif fd.cpp_type == fd.CPPTYPE_STRING:
-                    parts.append(f"{self._pretty_field_name(fd.name)}: {v}")
-                elif fd.cpp_type == fd.CPPTYPE_ENUM:
-                    try:
-                        parts.append(f"{self._pretty_field_name(fd.name)}: {fd.enum_type.values_by_number[int(v)].name}")
-                    except Exception:
-                        parts.append(f"{self._pretty_field_name(fd.name)}: {v}")
-                else:
-                    # bytes / nested message inside nested message: ignore to keep summary clean
-                    continue
-        except Exception:
-            pass
-
-        if not parts:
-            return "(details unavailable)"
-        # Prefer common axis ordering if present
-        axis_order = ["X", "Y", "Z"]
-        if all(any(p.startswith(a + ":") for p in parts) for a in axis_order):
-            # not likely with our format, keep generic
-            pass
-        return "; ".join(parts)
-
     def _extract_overall_values(self, data_upload_msg) -> list:
         """REFACTORED: Wrapper to OverallValuesExtractor."""
         return OverallValuesExtractor.extract_overall_values(data_upload_msg)
     
-    def _format_session_and_overall_text(self, session_info: dict, overall_values: list) -> str:
-        """Format session info and overall_values into readable text."""
-        lines = []
-        
-        # Format session info if available
-        if session_info:
-            accept_msg = session_info.get("accept_msg")
-            if accept_msg:
-                lines.append("=== SESSION ACCEPTED ===")
-                
-                # Virtual ID
-                virtual_id = getattr(accept_msg, "virtual_id", 0)
-                lines.append(f"Virtual ID:    {virtual_id}")
-                
-                # Hardware type
-                hw_type = getattr(accept_msg, "hardware_type", 0)
-                lines.append(f"Hardware Type: {hw_type}")
-                
-                # HW Version
-                hw_version = getattr(accept_msg, "hw_version", 0)
-                lines.append(f"HW Version:    0x{hw_version:04X}")
-                
-                # FW Version
-                fw_version = getattr(accept_msg, "fw_version", 0)
-                lines.append(f"FW Version:    0x{fw_version:08X}")
-                
-                # Battery
-                battery = getattr(accept_msg, "battery_indicator", 0)
-                lines.append(f"Battery:       {battery}%")
-                
-                # Self diagnostic
-                self_diag = getattr(accept_msg, "self_diag", 0)
-                lines.append(f"Self Diag:     {self_diag}")
-                
-                # RSSI (from session_info if available)
-                session_info_msg = getattr(accept_msg, "session_info", None)
-                if session_info_msg:
-                    ble_info = getattr(session_info_msg, "session_info_ble", None)
-                    if ble_info:
-                        rssi = getattr(ble_info, "rssi", 0)
-                        lines.append(f"RSSI:          {rssi} dBm")
-                
-                lines.append("")  # Empty line separator
-        
-        # Format overall measurements if available
-        if overall_values and len(overall_values) > 0:
-            # Group by measurement type (extract from label)
-            grouped = {}
-            for item in overall_values:
-                label = item.get("label", "")
-                value = item.get("value", "")
-                details = item.get("details", "")
-                
-                # Extract measurement type (e.g., "Acceleration (Overall)" -> "Acceleration")
-                if " - " in label:
-                    meas_type, field_name = label.split(" - ", 1)
-                else:
-                    # Single value measurement (like Temperature with int32_data)
-                    meas_type = label
-                    field_name = "Value"
-                
-                if meas_type not in grouped:
-                    grouped[meas_type] = []
-                
-                grouped[meas_type].append({
-                    "field": field_name,
-                    "value": value,
-                    "details": details
-                })
-            
-            lines.append("=== OVERALL MEASUREMENTS ===")
-            
-            # Preferred order
-            type_order = ["Acceleration (Overall)", "Velocity (Overall)", "Enveloper3 (Overall)", "Temperature (Overall)"]
-            sorted_types = [t for t in type_order if t in grouped] + [t for t in grouped if t not in type_order]
-            
-            for meas_type in sorted_types:
-                fields = grouped[meas_type]
-                # Short name for header
-                type_name = meas_type.replace(" (Overall)", "")
-                lines.append(f"--- {type_name} ---")
-                
-                # Special handling for Temperature
-                if type_name == "Temperature":
-                    # Temperature can come as int32_data (field="Value") or as measurement_overall (field="Mean")
-                    temp_value = None
-                    for item in fields:
-                        if item["field"] == "Value":
-                            temp_value = item["value"]
-                            break
-                        elif item["field"] == "Mean" and item["value"] != "0":
-                            temp_value = item["value"]
-                            break
-                    
-                    if temp_value:
-                        lines.append(f"  Value:        {temp_value} °C")
-                    continue
-                
-                # Extract duration if present
-                duration_val = None
-                for f in fields:
-                    if "duration" in f["details"].lower():
-                        m = re.search(r"Duration:\s*(\d+)", f["details"])
-                        if m:
-                            duration_val = m.group(1)
-                            break
-                
-                if duration_val:
-                    lines.append(f"  Duration:     {duration_val} ms")
-                
-                # Display fields in preferred order
-                field_order = ["Peak to Peak", "RMS", "Peak", "Standard Deviation", "Mean"]
-                sorted_fields = [f for f in field_order if any(item["field"] == f for item in fields)]
-                
-                for field_name in sorted_fields:
-                    for item in fields:
-                        if item["field"] == field_name:
-                            # Pad field name to align values
-                            lines.append(f"  {field_name:<13} {item['value']}")
-                            break
-        
-        return "\n".join(lines)
-    
     def _export_waveform_capture(self, tile_id: int, payloads: list, parsed_msgs: list) -> dict:
         """REFACTORED: Wrapper to WaveformExporter."""
         exporter = WaveformExporter(CAPTURE_DIR)
-        return exporter.export_waveform_capture(tile_id, payloads, parsed_msgs, self._hex_short)
+        return exporter.export_waveform_capture(tile_id, payloads, parsed_msgs, ProtobufFormatter.hex_short)
 
     async def _run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str, record_sessions: bool, session_root: str,
                             name_contains: str = "", service_uuid_contains: str = "", mfg_id_hex: str = "", mfg_data_hex_contains: str = "", twf_type: int = None) -> None:
@@ -493,7 +205,7 @@ class BleCycleWorker:
                 return
             if self._is_cancelled(tile_id):
                 return
-            if self._adv_matches(device, advertisement_data, address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains):
+            if ble_adv_matches(device, advertisement_data, address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains):
                 if not found_event.is_set():
                     matched_device["value"] = device
                     found_event.set()
@@ -602,7 +314,7 @@ class BleCycleWorker:
             elif action == "session_test":
                 # Just display session info (already received in AcceptSession above)
                 session_info = {"accept_msg": accept_session_msg, "payload": accept_session_payload}
-                rx_text = self._format_session_and_overall_text(session_info, [])
+                rx_text = format_session_and_overall_text(session_info, [])
                 await helpers.send_close_session()
                 self.ui_queue.put(("tile_update", tile_id, {
                     "status": "Session test OK",
@@ -735,7 +447,7 @@ class BleCycleWorker:
                 
                 # Format display with session info + overall + export info
                 session_info = {"accept_msg": accept_session_msg, "payload": accept_session_payload}
-                rx_text = self._format_session_and_overall_text(session_info, overall_values)
+                rx_text = format_session_and_overall_text(session_info, overall_values)
                 rx_text += f"\n\n--- WAVEFORM EXPORT ---\n"
                 if export_info:
                     if "error" in export_info:
@@ -948,7 +660,7 @@ class BleCycleWorker:
         def _on_device_found(device, advertisement_data):
             if not getattr(device, "address", None):
                 return
-            if self._adv_matches(device, advertisement_data, address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains):
+            if ble_adv_matches(device, advertisement_data, address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains):
                 if not found_event.is_set():
                     matched_device["value"] = device
                     found_event.set()
@@ -1133,7 +845,7 @@ class BleCycleWorker:
                 
                 # Generate formatted rx_text from session_info and overall_values if available
                 if session_info or (overall_values and len(overall_values) > 0):
-                    formatted_rx_text = self._format_session_and_overall_text(session_info, overall_values)
+                    formatted_rx_text = format_session_and_overall_text(session_info, overall_values)
                     if formatted_rx_text:
                         latest_rx_text = formatted_rx_text
                 
@@ -1166,6 +878,7 @@ SimGwV2App = create_app_class(BleCycleWorker, TileState)
 
 
 def main() -> None:
+    import tkinter as tk
     root = tk.Tk()
     SimGwV2App(root)
     root.mainloop()
