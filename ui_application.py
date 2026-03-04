@@ -132,17 +132,23 @@ def create_app_class(BleCycleWorker, TileState):
             self._apply_theme()
             self._build_ui()
             self._poll_queue()
+            
+            # Apply Windows customization after window is fully rendered
+            self.root.after(100, self._apply_windows_customization)
     
-        def _apply_theme(self) -> None:
-            # Use centralized color palette from config
-            self.colors = UI_COLORS
-    
-            # Windows 10/11: Customize window appearance (dark mode, borders, colors)
+        def _apply_windows_customization(self) -> None:
+            """Apply Windows-specific window customization (dark mode, borders, etc.)."""
             try:
                 import ctypes
                 
-                # Get window handle
-                hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+                # Force window update to ensure it's rendered
+                self.root.update_idletasks()
+                
+                # Get window handle - try both methods
+                try:
+                    hwnd = int(self.root.wm_frame(), 16)  # Try frame method first (more reliable)
+                except Exception:
+                    hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
                 
                 # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 10 1809+)
                 # Enable dark title bar
@@ -183,6 +189,11 @@ def create_app_class(BleCycleWorker, TileState):
                     
             except Exception:
                 pass  # Not on Windows or API not available
+
+    
+        def _apply_theme(self) -> None:
+            # Use centralized color palette from config
+            self.colors = UI_COLORS
     
             style = ttk.Style(self.root)
             style.theme_use("clam")
@@ -354,7 +365,7 @@ def create_app_class(BleCycleWorker, TileState):
         def _ui_build_run_header_card(self, parent: tk.Widget) -> tuple:
             """Build the standard header (used in Demo and Expert) with Start Auto / Stop and run-state labels."""
             card = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            card.pack(fill=tk.X, padx=0, pady=(16, 12))
+            card.pack(fill=tk.X, padx=16, pady=(16, 12))
             inner = tk.Frame(card, bg=self.colors["panel"])
             inner.pack(fill=tk.X, padx=14, pady=12)
     
@@ -1106,24 +1117,62 @@ def create_app_class(BleCycleWorker, TileState):
             nb.add(expert_tab, text="Expert")
             nb.add(devices_tab, text="Devices")
             nb.add(settings_tab, text="Settings")
-    
+
             self._devices_tab_widget = devices_tab
             nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+            # Add logo overlay in tab bar area (top-right corner)
+            self._add_logo_to_tab_bar()
     
             self._build_ui_demo(demo_tab)
-    
-            # Build existing UI inside Expert tab by temporarily swapping self.root.
-            tk_root = self._tk_root
-            orig_root = self.root
-            self.root = expert_tab
-            try:
-                self._build_ui_expert()
-            finally:
-                self.root = orig_root
-                self._tk_root = tk_root
-    
+            self._build_ui_expert(expert_tab)
             self._build_ui_devices(devices_tab)
             self._build_ui_settings(settings_tab)
+    
+        def _add_logo_to_tab_bar(self) -> None:
+            """Add SKF logo overlay in the tab bar area (top-right corner)."""
+            try:
+                from PIL import Image, ImageTk
+                import os
+                
+                # Load logo image
+                logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "SKF_transparent_cream.png")
+                if not os.path.exists(logo_path):
+                    return  # No logo available
+                
+                img = Image.open(logo_path)
+                
+                # Crop transparent borders to get tight bounds around the logo
+                # First convert to RGBA if needed
+                if img.mode != 'RGBA':
+                    img = img.convert('RGBA')
+                
+                # Get bounding box of non-transparent pixels
+                bbox = img.getbbox()
+                if bbox:
+                    img = img.crop(bbox)
+                
+                # Resize to fit in tab bar (height ~24-28px, keep aspect ratio)
+                target_height = 28
+                aspect_ratio = img.width / img.height
+                target_width = int(target_height * aspect_ratio)
+                img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                
+                # Convert to PhotoImage
+                photo = ImageTk.PhotoImage(img)
+                
+                # Create a frame that will be placed in top-right corner
+                logo_frame = tk.Frame(self.root, bg=self.colors["bg"])
+                logo_frame.place(relx=1.0, y=2, anchor="ne", x=-10)
+                
+                # Add logo label
+                logo_label = tk.Label(logo_frame, image=photo, bg=self.colors["bg"])
+                logo_label.image = photo  # Keep reference
+                logo_label.pack()
+                
+            except Exception as e:
+                # Silently fail if PIL not available or image loading fails
+                print(f"Could not load logo: {e}")
     
         def _demo_update_timeline(self, checklist_update: Dict[str, str]) -> None:
             """Update the Demo timeline dots based on the merged checklist state."""
@@ -1372,14 +1421,14 @@ def create_app_class(BleCycleWorker, TileState):
     
             self.demo_summary.configure(state=tk.DISABLED)
     
-        def _build_ui_expert(self) -> None:
+        def _build_ui_expert(self, parent: tk.Frame) -> None:
     
             # Header (same layout as Demo)
-            _card, self.start_button, self.stop_auto_button = self._ui_build_run_header_card(self.root)
+            _card, self.start_button, self.stop_auto_button = self._ui_build_run_header_card(parent)
             self._update_demo_run_controls()
     
             # Filters (keep only the essentials here; other runtime settings live in the Settings tab)
-            filter_box = tk.Frame(self.root, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+            filter_box = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
             filter_box.pack(fill=tk.X, padx=16, pady=(0, 8))
             filter_in = tk.Frame(filter_box, bg=self.colors["panel"])
             filter_in.pack(fill=tk.X, padx=14, pady=10)
@@ -1403,7 +1452,7 @@ def create_app_class(BleCycleWorker, TileState):
             self._build_field(form, "ADV name contains", self.adv_name_contains_var)
     
             # Manual Commands with border
-            manual_card = tk.Frame(self.root, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
+            manual_card = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
             manual_card.pack(fill=tk.X, padx=16, pady=(0, 12))
             manual = tk.Frame(manual_card, bg=self.colors["panel"])
             manual.pack(fill=tk.X, padx=14, pady=10)
@@ -1443,7 +1492,7 @@ def create_app_class(BleCycleWorker, TileState):
             ]
             self._wrap_buttons(util, util_btns, min_btn_px=180)
     
-            tiles_frame = tk.Frame(self.root, bg=self.colors["bg"])
+            tiles_frame = tk.Frame(parent, bg=self.colors["bg"])
             tiles_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(12, 16))
     
             self.canvas = tk.Canvas(tiles_frame, bg=self.colors["bg"], highlightthickness=0)
