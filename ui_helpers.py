@@ -6,9 +6,44 @@ Contains:
 - TTK theme configuration
 - Widget factory helpers
 """
+
 import tkinter as tk
 from tkinter import ttk
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
+
+
+ColorPalette = Dict[str, str]
+
+_DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+_DWMWA_WINDOW_CORNER_PREFERENCE = 33
+_DWMWA_BORDER_COLOR = 34
+_DWMWA_CAPTION_COLOR = 35
+
+_DWMWCP_ROUND = 2
+_TITLE_COLORREF = 0x00211A17
+_BORDER_COLORREF = 0x003A2F2A
+
+_DEFAULT_CARD_PACK = {"fill": tk.X, "padx": 16, "pady": (16, 12)}
+_DEFAULT_TEXT_PACK = {"fill": tk.BOTH, "expand": True}
+_DEFAULT_TEXT_FONT = ("Consolas", 10)
+
+
+def _dwm_set_window_attribute(ctypes_module, hwnd: int, attribute: int, value: int) -> None:
+    """Set one DWM window attribute (Windows-only helper)."""
+    ctypes_module.windll.dwmapi.DwmSetWindowAttribute(
+        hwnd,
+        attribute,
+        ctypes_module.byref(ctypes_module.c_int(value)),
+        ctypes_module.sizeof(ctypes_module.c_int),
+    )
+
+
+def _configure_combobox_popup_colors(root: tk.Tk, colors: ColorPalette) -> None:
+    """Apply dark popup Listbox colors used by readonly comboboxes."""
+    root.option_add("*TCombobox*Listbox*Background", colors["panel"])
+    root.option_add("*TCombobox*Listbox*Foreground", colors["text"])
+    root.option_add("*TCombobox*Listbox*selectBackground", colors["accent"])
+    root.option_add("*TCombobox*Listbox*selectForeground", colors["text"])
 
 
 def apply_windows_dark_mode(root: tk.Tk) -> None:
@@ -23,58 +58,31 @@ def apply_windows_dark_mode(root: tk.Tk) -> None:
     """
     try:
         import ctypes
-        
+
         # Force window update to ensure it's rendered
         root.update_idletasks()
-        
+
         # Get window handle - try both methods
         try:
             hwnd = int(root.wm_frame(), 16)  # Try frame method first (more reliable)
         except Exception:
             hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
-        
-        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 10 1809+)
-        # Enable dark title bar
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            hwnd, 20, 
-            ctypes.byref(ctypes.c_int(1)), 
-            ctypes.sizeof(ctypes.c_int)
-        )
-        
+
+        _dwm_set_window_attribute(ctypes, hwnd, _DWMWA_USE_IMMERSIVE_DARK_MODE, 1)
+
         # Windows 11 22000+ specific enhancements
         try:
-            # DWMWA_CAPTION_COLOR = 35 - Set title bar color
-            # Convert hex color to COLORREF (0x00BBGGRR)
-            title_color = 0x00211a17  # Dark gray-blue matching panel
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 35,
-                ctypes.byref(ctypes.c_int(title_color)),
-                ctypes.sizeof(ctypes.c_int)
-            )
-            
-            # DWMWA_BORDER_COLOR = 34 - Set border color
-            border_color = 0x003a2f2a  # Subtle dark border
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 34,
-                ctypes.byref(ctypes.c_int(border_color)),
-                ctypes.sizeof(ctypes.c_int)
-            )
-            
-            # DWMWA_WINDOW_CORNER_PREFERENCE = 33
-            # DWMWCP_ROUND = 2 (rounded corners)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 33,
-                ctypes.byref(ctypes.c_int(2)),
-                ctypes.sizeof(ctypes.c_int)
-            )
+            _dwm_set_window_attribute(ctypes, hwnd, _DWMWA_CAPTION_COLOR, _TITLE_COLORREF)
+            _dwm_set_window_attribute(ctypes, hwnd, _DWMWA_BORDER_COLOR, _BORDER_COLORREF)
+            _dwm_set_window_attribute(ctypes, hwnd, _DWMWA_WINDOW_CORNER_PREFERENCE, _DWMWCP_ROUND)
         except Exception:
             pass  # Windows 11 APIs not available (Windows 10)
-            
+
     except Exception:
         pass  # Not on Windows or API not available
 
 
-def apply_dark_theme(root: tk.Tk, colors: dict) -> None:
+def apply_dark_theme(root: tk.Tk, colors: ColorPalette) -> None:
     """
     Apply dark theme styling to TTK widgets.
     
@@ -140,11 +148,7 @@ def apply_dark_theme(root: tk.Tk, colors: dict) -> None:
     style.map("Vertical.TScrollbar",
         background=[("active", colors["panel_alt"])])
 
-    # Configure popup listbox colors for Combobox
-    root.option_add("*TCombobox*Listbox*Background", colors["panel"])
-    root.option_add("*TCombobox*Listbox*Foreground", colors["text"])
-    root.option_add("*TCombobox*Listbox*selectBackground", colors["accent"])
-    root.option_add("*TCombobox*Listbox*selectForeground", colors["text"])
+    _configure_combobox_popup_colors(root, colors)
 
     # Notebook (tabs) styling - modern dark theme with equal width tabs
     style.configure("TNotebook", 
@@ -183,7 +187,7 @@ def apply_dark_theme(root: tk.Tk, colors: dict) -> None:
         background=[("active", colors["border"])])
 
 
-def create_card(parent: tk.Widget, colors: dict, **pack_kwargs) -> tuple:
+def create_card(parent: tk.Widget, colors: ColorPalette, **pack_kwargs) -> Tuple[tk.Frame, tk.Frame]:
     """
     Create a styled card container (Frame with border).
     
@@ -202,8 +206,7 @@ def create_card(parent: tk.Widget, colors: dict, **pack_kwargs) -> tuple:
         highlightthickness=1
     )
     
-    # Default pack options
-    pack_options = {"fill": tk.X, "padx": 16, "pady": (16, 12)}
+    pack_options = dict(_DEFAULT_CARD_PACK)
     pack_options.update(pack_kwargs)
     card.pack(**pack_options)
     
@@ -216,10 +219,10 @@ def create_card(parent: tk.Widget, colors: dict, **pack_kwargs) -> tuple:
 def create_labeled_entry(
     parent: tk.Widget, 
     label_text: str,
-    colors: dict,
+    colors: ColorPalette,
     default_value: str = "",
     width: int = 20
-) -> tuple:
+) -> Tuple[tk.Frame, tk.Label, ttk.Entry, tk.StringVar]:
     """
     Create a labeled entry widget in a horizontal layout.
     
@@ -253,9 +256,9 @@ def create_labeled_entry(
 
 def create_text_widget(
     parent: tk.Widget,
-    colors: dict,
+    colors: ColorPalette,
     wrap: str = tk.WORD,
-    font: Optional[tuple] = None,
+    font: Optional[Tuple[Any, ...]] = None,
     **pack_kwargs
 ) -> tk.Text:
     """
@@ -272,7 +275,7 @@ def create_text_widget(
         Configured Text widget
     """
     if font is None:
-        font = ("Consolas", 10)
+        font = _DEFAULT_TEXT_FONT
     
     text_widget = tk.Text(
         parent,
@@ -289,9 +292,17 @@ def create_text_widget(
         pady=10
     )
     
-    # Default pack options
-    pack_options = {"fill": tk.BOTH, "expand": True}
+    pack_options = dict(_DEFAULT_TEXT_PACK)
     pack_options.update(pack_kwargs)
     text_widget.pack(**pack_options)
     
     return text_widget
+
+
+__all__ = [
+    "apply_windows_dark_mode",
+    "apply_dark_theme",
+    "create_card",
+    "create_labeled_entry",
+    "create_text_widget",
+]

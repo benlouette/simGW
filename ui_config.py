@@ -8,6 +8,13 @@ Contains:
 - UI timing constants
 """
 
+from typing import Dict, List, Tuple
+
+
+ColorPalette = Dict[str, str]
+ManualAction = Tuple[str, str]
+ChecklistItem = Tuple[str, str]
+
 # ==============================================================================
 # UI COLOR PALETTE (Slate theme - modern dark but softer)
 # ==============================================================================
@@ -33,9 +40,17 @@ UI_POLL_INTERVAL_MS = 150
 
 
 # ==============================================================================
+# CHECKLIST STATE SYMBOLS
+# ==============================================================================
+CHECKLIST_STATE_PENDING = "☐"
+CHECKLIST_STATE_IN_PROGRESS = "⧗"
+CHECKLIST_STATE_DONE = "☑"
+
+
+# ==============================================================================
 # MANUAL ACTIONS (for Expert tab)
 # ==============================================================================
-MANUAL_ACTIONS = [
+MANUAL_ACTIONS: List[ManualAction] = [
     ("Session Test", "session_test"),       # Open session, display info, close
     ("Overall", "overall"),                 # Request all 4 overalls
     ("Acceleration TWF", "acceleration_twf"),  # Request AccelerationTwf
@@ -49,7 +64,7 @@ MANUAL_ACTIONS = [
 # ==============================================================================
 # CHECKLIST ITEMS (for UI display)
 # ==============================================================================
-CHECKLIST_ITEMS = [
+CHECKLIST_ITEMS: List[ChecklistItem] = [
     ("waiting_connection", "Scanning..."),
     ("connected", "Connected"),
     ("general_info_exchange", "Session Accepted"),
@@ -58,4 +73,20 @@ CHECKLIST_ITEMS = [
     ("disconnect", "Disconnected"),
 ]
 
-CHECKLIST_STATE_MAP = {"pending": "☐", "in_progress": "⧗", "done": "☑"}
+CHECKLIST_STATE_MAP = {
+    "pending": CHECKLIST_STATE_PENDING,
+    "in_progress": CHECKLIST_STATE_IN_PROGRESS,
+    "done": CHECKLIST_STATE_DONE,
+}
+
+
+__all__ = [
+    "UI_COLORS",
+    "UI_POLL_INTERVAL_MS",
+    "MANUAL_ACTIONS",
+    "CHECKLIST_ITEMS",
+    "CHECKLIST_STATE_MAP",
+    "CHECKLIST_STATE_PENDING",
+    "CHECKLIST_STATE_IN_PROGRESS",
+    "CHECKLIST_STATE_DONE",
+]

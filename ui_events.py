@@ -2,7 +2,15 @@
 Shared UI event types and helpers for worker <-> Tkinter queue communication.
 """
 
-from typing import Any, Dict, Mapping, Optional, Tuple, TypedDict, Union, Literal
+from typing import Any, Dict, Literal, Mapping, Optional, Tuple, TypedDict, Union
+
+
+EVENT_TILE_UPDATE: Literal["tile_update"] = "tile_update"
+EVENT_CYCLE_DONE: Literal["cycle_done"] = "cycle_done"
+
+ChecklistStateMap = Dict[str, str]
+OverallValues = list
+ExportInfo = dict
 
 
 class UiErrorInfo(TypedDict, total=False):
@@ -17,9 +25,9 @@ class TileUpdatePayload(TypedDict, total=False):
     address: str
     session_dir: str
     rx_text: str
-    checklist: Dict[str, str]
-    overall_values: list
-    export_info: dict
+    checklist: ChecklistStateMap
+    overall_values: OverallValues
+    export_info: ExportInfo
     error: UiErrorInfo
     error_info: UiErrorInfo
     ts_ms: int
@@ -31,8 +39,23 @@ UiEvent = Union[TileUpdateEvent, CycleDoneEvent]
 
 
 def make_tile_update(tile_id: int, payload: Optional[Mapping[str, Any]] = None) -> TileUpdateEvent:
-    return ("tile_update", int(tile_id), dict(payload or {}))
+    """Build a normalized tile-update event tuple."""
+    return (EVENT_TILE_UPDATE, int(tile_id), dict(payload or {}))
 
 
 def make_cycle_done(tile_id: int) -> CycleDoneEvent:
-    return ("cycle_done", int(tile_id))
+    """Build a normalized cycle-done event tuple."""
+    return (EVENT_CYCLE_DONE, int(tile_id))
+
+
+__all__ = [
+    "UiErrorInfo",
+    "TileUpdatePayload",
+    "TileUpdateEvent",
+    "CycleDoneEvent",
+    "UiEvent",
+    "EVENT_TILE_UPDATE",
+    "EVENT_CYCLE_DONE",
+    "make_tile_update",
+    "make_cycle_done",
+]

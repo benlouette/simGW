@@ -1,39 +1,70 @@
+"""Demo tab UI and rendering helpers.
+
+Public API consumed by `ui_application.py`:
+- build_ui_demo
+- demo_style_plot_axes
+- demo_plot_waveform_from_raw_export
+- demo_update_timeline
+- demo_set_kpis_from_rx_text
+- demo_render_summary
+"""
+
 import os
 import re
 import time
 import tkinter as tk
-from tkinter import ttk
 from typing import Dict, Optional
 
-from ui_config import CHECKLIST_ITEMS
 from data_exporters import WaveformParser
+from ui_config import CHECKLIST_ITEMS
 
-WaveformExportTools = WaveformParser
+_MSG_TYPE_RE = re.compile(r"^TYPE:\s*([^\n]+)", flags=re.MULTILINE)
+_WAITING_WAVEFORM_TEXT = "(waiting for waveform...)"
 
 try:
-    import matplotlib.pyplot as plt
     from matplotlib.figure import Figure
     try:
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     except Exception:
         FigureCanvasTkAgg = None
 except Exception:
-    plt = None
     Figure = None
     FigureCanvasTkAgg = None
 
 
-def demo_clear_debug(app) -> None:
-    """Clear the Demo debug console."""
-    try:
-        if app.demo_debug is None:
-            return
-        app.demo_debug.configure(state=tk.NORMAL)
-        app.demo_debug.delete("1.0", tk.END)
-        app.demo_debug.configure(state=tk.DISABLED)
-    except Exception:
-        pass
+def _build_kpi_card(app, parent: tk.Frame, title: str, variable: tk.StringVar) -> None:
+    card = tk.Frame(parent, bg=app.colors["panel"], highlightbackground=app.colors["border"], highlightthickness=1)
+    card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
 
+    body = tk.Frame(card, bg=app.colors["panel"])
+    body.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+
+    tk.Label(body, text=title, bg=app.colors["panel"], fg=app.colors["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
+    tk.Label(body, textvariable=variable, bg=app.colors["panel"], fg=app.colors["text"], font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(2, 0))
+
+
+def _extract_formatted_rx_text(rx_text: str) -> str:
+    lines_raw = rx_text.split("\n")
+    filtered_lines = []
+    skip_next_blank = False
+    for line in lines_raw:
+        if line.startswith("TYPE:") or line.startswith("HEX:"):
+            skip_next_blank = True
+            continue
+        if skip_next_blank and line.strip() == "":
+            skip_next_blank = False
+            continue
+        filtered_lines.append(line)
+    return "\n".join(filtered_lines).strip()
+
+
+def _sampling_rate_label(meta: dict) -> str:
+    fs_hz = meta.get("fs_hz")
+    try:
+        fs_value = float(fs_hz) if fs_hz is not None else 0.0
+    except Exception:
+        fs_value = 0.0
+    return f"{int(fs_value)} Hz" if fs_value > 0.0 else "n/a"
 
 def build_ui_demo(app, parent: tk.Frame) -> None:
     """Demo-friendly UI: no hex dumps, just KPIs + a timeline + a short summary."""
@@ -46,18 +77,10 @@ def build_ui_demo(app, parent: tk.Frame) -> None:
     kpi = tk.Frame(panel, bg=app.colors["bg"])
     kpi.pack(fill=tk.X, pady=(0, 12))
 
-    def _kpi_card(title: str, var: tk.StringVar) -> None:
-        c = tk.Frame(kpi, bg=app.colors["panel"], highlightbackground=app.colors["border"], highlightthickness=1)
-        c.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
-        ci = tk.Frame(c, bg=app.colors["panel"])
-        ci.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
-        tk.Label(ci, text=title, bg=app.colors["panel"], fg=app.colors["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        tk.Label(ci, textvariable=var, bg=app.colors["panel"], fg=app.colors["text"], font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(2, 0))
-
-    _kpi_card("Status", app.demo_status_var)
-    _kpi_card("Device", app.demo_device_var)
-    _kpi_card("Overall", app.demo_overall_var)
-    _kpi_card("Waveform", app.demo_waveform_var)
+    _build_kpi_card(app, kpi, "Status", app.demo_status_var)
+    _build_kpi_card(app, kpi, "Device", app.demo_device_var)
+    _build_kpi_card(app, kpi, "Overall", app.demo_overall_var)
+    _build_kpi_card(app, kpi, "Waveform", app.demo_waveform_var)
 
     tl_box = tk.Frame(panel, bg=app.colors["panel"], highlightbackground=app.colors["border"], highlightthickness=1)
     tl_box.pack(fill=tk.X, pady=(0, 12))
@@ -103,7 +126,7 @@ def build_ui_demo(app, parent: tk.Frame) -> None:
 
     tk.Label(header_row, text="Waveform", bg=app.colors["panel"], fg=app.colors["text"], font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
 
-    app.demo_plot_label = tk.Label(header_row, text="(waiting for waveform...)", bg=app.colors["panel"], fg=app.colors["muted"], font=("Segoe UI", 10))
+    app.demo_plot_label = tk.Label(header_row, text=_WAITING_WAVEFORM_TEXT, bg=app.colors["panel"], fg=app.colors["muted"], font=("Segoe UI", 10))
     app.demo_plot_label.pack(side=tk.LEFT, padx=(10, 0))
 
     plot_area = tk.Frame(plot_in, bg=app.colors["panel"])
@@ -141,31 +164,6 @@ def build_ui_demo(app, parent: tk.Frame) -> None:
 
     panes.add(sum_box, stretch="always")
     panes.add(plot_box, stretch="always")
-
-    dbg_box = tk.Frame(panel, bg=app.colors["panel"], highlightbackground=app.colors["border"], highlightthickness=1)
-    dbg_box.pack(fill=tk.BOTH, expand=False, pady=(12, 0))
-    dbg_in = tk.Frame(dbg_box, bg=app.colors["panel"])
-    dbg_in.pack(fill=tk.BOTH, expand=True, padx=14, pady=10)
-
-    hdr = tk.Frame(dbg_in, bg=app.colors["panel"])
-    hdr.pack(fill=tk.X)
-    tk.Label(hdr, text="Debug", bg=app.colors["panel"], fg=app.colors["muted"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
-
-    ttk.Button(hdr, text="Clear", command=lambda: demo_clear_debug(app)).pack(side=tk.RIGHT)
-
-    app.demo_debug = tk.Text(
-        dbg_in,
-        height=7,
-        wrap=tk.NONE,
-        bg=app.colors["panel"],
-        fg=app.colors["text"],
-        bd=0,
-        highlightthickness=0,
-        font=("Consolas", 9),
-    )
-    app.demo_debug.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-    app.demo_debug.configure(state=tk.DISABLED)
-
 
 def demo_style_plot_axes(app, ax) -> None:
     """Apply dark-theme styling to the embedded matplotlib axes."""
@@ -209,25 +207,18 @@ def demo_plot_waveform_from_raw_export(app, raw_path: str) -> None:
     if not os.path.isfile(raw_path):
         raise FileNotFoundError(raw_path)
 
-    y, meta = WaveformExportTools.extract_true_waveform_samples(raw_path)
+    y, meta = WaveformParser.extract_true_waveform_samples(raw_path)
 
     try:
         n = int(meta.get("samples") or len(y))
     except Exception:
         n = len(y)
 
-    fs_hz = meta.get("fs_hz")
     twf_type = meta.get("twf_type", "Unknown")
     data_type = meta.get("data_type", "S16")
 
-    try:
-        fs_value = float(fs_hz) if fs_hz is not None else 0.0
-    except Exception:
-        fs_value = 0.0
-    fs_text = f"{int(fs_value)} Hz" if fs_value > 0.0 else "n/a"
-
     info_parts = [f"{n} samples"]
-    info_parts.append(f"Sampling rate: {fs_text}")
+    info_parts.append(f"Sampling rate: {_sampling_rate_label(meta)}")
     info_parts.append(data_type)
     info_parts.append(twf_type)
     info_parts.append(os.path.basename(raw_path))
@@ -277,11 +268,6 @@ def demo_set_kpis_from_rx_text(app, rx_text: str, export_info: Optional[dict]) -
     if not rx_text:
         return
 
-    msg_type = ""
-    m = re.search(r"^TYPE:\s*([^\n]+)", rx_text.strip(), flags=re.MULTILINE)
-    if m:
-        msg_type = m.group(1).strip()
-
     if export_info:
         if export_info.get("samples") or export_info.get("raw") or export_info.get("index"):
             try:
@@ -300,19 +286,7 @@ def demo_render_summary(app, rx_text: str, overall_values: Optional[list] = None
         return
 
     if rx_text and ("=== OVERALL MEASUREMENTS ===" in rx_text or "=== SESSION ACCEPTED ===" in rx_text):
-        lines_raw = rx_text.split('\n')
-        filtered_lines = []
-        skip_next = False
-        for line in lines_raw:
-            if line.startswith('TYPE:') or line.startswith('HEX:'):
-                skip_next = True
-                continue
-            if skip_next and line.strip() == '':
-                skip_next = False
-                continue
-            filtered_lines.append(line)
-
-        display_text = '\n'.join(filtered_lines).strip()
+        display_text = _extract_formatted_rx_text(rx_text)
 
         now_s = time.strftime("%H:%M:%S")
         header = f"Last update: {now_s}\n\n"
@@ -356,7 +330,7 @@ def demo_render_summary(app, rx_text: str, overall_values: Optional[list] = None
     else:
         msg_type = ""
         try:
-            mm = re.search(r"^TYPE:\s*([^\n]+)", (rx_text or "").strip(), flags=re.MULTILINE)
+            mm = _MSG_TYPE_RE.search((rx_text or "").strip())
             msg_type = mm.group(1).strip() if mm else ""
         except Exception:
             msg_type = ""

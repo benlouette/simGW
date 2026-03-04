@@ -1,6 +1,6 @@
 # SimGW v9 - BLE Sensor Gateway
 
-Advanced BLE gateway application for SKF sensors with real-time data capture, protobuf decoding, and session recording. Refactored for maintainability with modular architecture.
+Simulated BLE gateway application for SKF sensors ELO-IMX1 with real-time data capture, protobuf decoding, and session recording.
 
 ## Features
 
@@ -11,16 +11,16 @@ Advanced BLE gateway application for SKF sensors with real-time data capture, pr
 - Auto-cycle workflow: Scan → Connect → Overall → Waveform → Close
 
 ### 🔧 **Expert Tab**
-- Multi-tile device monitoring (up to 3 devices simultaneously)
+- Multi-tile device monitoring 
 - Manual action control (Session Test, Overall, TWF capture, Full Cycle)
 - Real-time protobuf message decoding
 - Hex dump display and session logging
 
 ### 📱 **Devices Tab**
-- BLE device scanner with filtering (MAC prefix: `C4:BD:6A`)
+- BLE device scanner with configurable address + name filtering
 - Real-time RSSI monitoring
 - Detailed advertising data display
-- One-click connection management
+- Auto-scan while the tab is active
 
 ### ⚙️ **Settings Tab**
 - TWF type selection (Acceleration/Velocity/Enveloper3)
@@ -30,7 +30,7 @@ Advanced BLE gateway application for SKF sensors with real-time data capture, pr
 
 ## Architecture
 
-### Modular Design (Refactored March 2026)
+### Modular Design 
 
 **Core Modules:**
 - **simGw_v9.py** - Main entry point + `BleCycleWorker` orchestration
@@ -53,10 +53,10 @@ Advanced BLE gateway application for SKF sensors with real-time data capture, pr
 - **ble_waveform_service.py** - Shared waveform collection/export flow
 
 **UI Tab Modules:**
-- **demo_tab.py** - Demo tab widgets and helpers
-- **expert_tab.py** - Expert tab widgets and tile helpers
-- **devices_tab.py** - Devices scan table and details view
-- **settings_tab.py** - Settings tab controls
+- **TabDemo.py** - Demo tab widgets and helpers
+- **TabExpert.py** - Expert tab widgets and tile helpers
+- **TabDevices.py** - Devices scan table and details view
+- **TabSettings.py** - Settings tab controls
 
 **UI Utilities:**
 - **ui_helpers.py** - Reusable Tkinter widgets and styling helpers
@@ -83,7 +83,7 @@ Advanced BLE gateway application for SKF sensors with real-time data capture, pr
 - **Dependencies**: 
   - `bleak` - Cross-platform BLE library
   - `protobuf` - Protocol Buffers runtime
-  - `matplotlib` - (Optional) For waveform plotting in Demo tab
+  - `matplotlib` - For waveform plotting in Demo tab
 
 Install dependencies:
 
@@ -104,10 +104,10 @@ pip install -r requirements.txt
 1. Click **"Start Auto"** to begin automatic cycle
 2. Application automatically: Scans → Connects → Requests Overall → Requests Waveform → Closes
 3. View KPIs in the timeline visualization
-4. Plot waveform data (if matplotlib available)
+4. Plot waveform data 
 
 ### Expert Tab - Manual Control
-1. **Scan** for devices, select one
+1. **filter** for devices, select one
 2. Use **Manual Actions** buttons:
    - **Session Test**: Quick session info check
    - **Overall**: Request all 4 overall measurements
@@ -122,17 +122,20 @@ Sessions are automatically logged to `sessions/<sensor_id>_<timestamp>/` with:
 - Hex dumps for debugging
 
 ### Waveform Export
-Waveforms are saved to `captures/waveform_tile<N>_<timestamp>.bin` as raw protobuf payloads.
+Waveforms are exported to `captures/` from collected protobuf payloads:
+- **`.bin`** always (raw payload blocks)
+- **`.txt`** optional (human-readable blocks, when available)
+- Optional side outputs (index/samples) depending on payload content
 
 ## UI Theme
 
 Modern dark theme (Windows 11 optimized):
-- **Background**: `#0f1115` (dark blue-gray)
-- **Panel**: `#171a21` (darker panels)
-- **Accent**: `#0F7FFF` (electric blue)
-- **Success**: `#22c55e` (green)
-- **Warning**: `#f59e0b` (orange)
-- **Error**: `#ef4444` (red)
+- **Background**: `#1e2127` (charcoal gray)
+- **Panel**: `#282c34` (slightly lighter panel)
+- **Accent**: `#61afef` (soft blue)
+- **Success**: `#98c379` (soft green)
+- **Warning**: `#e5c07b` (warm yellow)
+- **Error**: `#e06c75` (soft red)
 - **Windows 11**: Rounded corners, dark title bar, custom borders
 
 ## Configuration
@@ -149,8 +152,13 @@ Modern dark theme (Windows 11 optimized):
 
 ### Protocol Settings (protocol_utils.py)
 - Phase definitions (scanning, connecting, metrics, etc.)
+- Public phase order constant (`PHASE_ORDER`) used for monotonic UI phase updates
 - Directory paths (captures, sessions, protocol)
 - Auto-restart delay
+
+### Runtime Debug
+- Set `SIMGW_DEBUG=1` (or `true` / `yes` / `on`) to enable debug logs in console.
+- Keep unset (default) for quiet runtime output.
 
 ## Data Management
 
@@ -218,28 +226,6 @@ The `.gitignore` file excludes:
    protoc --python_out=. *.proto
    ```
 3. Update `protobuf_formatters.py` if message structure changed
-
-## Version History
-
-- **v9.2** - March 2026 (Current)
-  - 🧩 UI tabs split into dedicated modules (`demo_tab.py`, `expert_tab.py`, `devices_tab.py`, `settings_tab.py`)
-  - ⚙️ Split worker responsibilities into `ble_worker_services.py` and `ble_waveform_service.py`
-  - 📦 Centralized protobuf imports via `protocol_imports.py`
-  - 🧱 Added typed worker/UI queue contract with `ui_events.py`
-
-- **v9.1** - March 2026
-  - 🧹 **Major Refactoring**: Modular architecture for maintainability
-  - 📦 Created 6 new modules: `ble_filters`, `display_formatters`, `ble_config`, `ui_config`, `protocol_utils`, `ui_helpers`
-  - ♻️ Removed 627 lines of dead code
-  - 🎨 Separated UI styling into reusable helpers
-  - 📋 Deprecated monolithic `config.py`
-  - 🗑️ Removed legacy `froto/` protocol and test files
-  
-- **v9.0** - February 2026
-  - Modern dark UI with Windows 11 integration
-  - Demo tab with auto-cycle workflow
-  - Enhanced protobuf decoding
-  - Session recording with metadata
 
 ## License
 

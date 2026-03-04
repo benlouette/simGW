@@ -38,21 +38,23 @@ from ui_config import (
 from ble_config import MEASUREMENT_TYPE_ACCELERATION_TWF
 from data_exporters import WaveformParser
 from ui_helpers import apply_windows_dark_mode, apply_dark_theme
-from devices_tab import (
+from TabDevices import (
     build_ui_devices,
     devices_scan,
 )
-from settings_tab import build_ui_settings
-from demo_tab import (
+from TabSettings import build_ui_settings
+from TabDemo import (
     build_ui_demo,
     demo_plot_waveform_from_raw_export,
     demo_update_timeline,
     demo_set_kpis_from_rx_text,
     demo_render_summary,
 )
-from expert_tab import build_ui_expert
+from TabExpert import build_ui_expert
 from ui_events import TileUpdatePayload, UiEvent
+
 WaveformExportTools = WaveformParser
+_CHECKLIST_PENDING_SYMBOL = "☐"
 
 
 def create_app_class(BleCycleWorker, TileState):
@@ -81,7 +83,6 @@ def create_app_class(BleCycleWorker, TileState):
             self.tile_export_info: Dict[int, dict] = {}
             self.tile_state: Dict[int, Any] = {}
             self._demo_mirrored_tile_id: Optional[int] = None
-            self._demo_last_plotted_raw: str = ""
     
             # Demo tab state
             self.demo_status_var = tk.StringVar(value="Idle")
@@ -101,8 +102,7 @@ def create_app_class(BleCycleWorker, TileState):
             self.demo_overall_var = tk.StringVar(value="•")
             self.demo_waveform_var = tk.StringVar(value="•")
             self.demo_summary = None
-            self.demo_debug = None
-            self._log_max_lines = 2000
+            self.debug_mode = str(os.getenv("SIMGW_DEBUG", "0")).strip().lower() in {"1", "true", "yes", "on"}
             #  Demo timeline (mirrors the latest Expert tile checklist)
             self.demo_checklist_state = {key: "pending" for key, _title in CHECKLIST_ITEMS}
             self.demo_timeline_labels = {}  # key -> (dot_label, text_label)
@@ -120,7 +120,7 @@ def create_app_class(BleCycleWorker, TileState):
             self._devices_tab_widget = None  # set in _build_ui
 
 
-            self.address_prefix_var = tk.StringVar(value="C4:BD:6A:")
+            self.address_prefix_var = tk.StringVar(value="C4:BD:6A:01:02:03")
             # Optional advertising-content filter (applied in addition to address prefix when set)
             self.adv_name_contains_var = tk.StringVar(value="IMx-1_ELO")
             self.scan_timeout_var = tk.StringVar(value="60")
@@ -140,24 +140,12 @@ def create_app_class(BleCycleWorker, TileState):
             self.root.after(100, lambda: apply_windows_dark_mode(self.root))
     
         def _log(self, level: str, msg: str) -> None:
-            """Append a timestamped line to the Demo debug console (if present)."""
+            """Emit debug logs to stdout only when SIMGW_DEBUG is enabled."""
             try:
-                if self.demo_debug is None:
+                if not self.debug_mode:
                     return
                 ts = time.strftime("%H:%M:%S")
-                line = f"[{ts}] {level}: {msg}\n"
-                self.demo_debug.configure(state=tk.NORMAL)
-                self.demo_debug.insert(tk.END, line)
-                # Trim to last N lines
-                try:
-                    n_lines = int(self.demo_debug.index("end-1c").split(".")[0])
-                    if n_lines > int(getattr(self, "_log_max_lines", 2000)):
-                        cut = max(1, n_lines // 4)
-                        self.demo_debug.delete("1.0", f"{cut}.0")
-                except Exception:
-                    pass
-                self.demo_debug.see(tk.END)
-                self.demo_debug.configure(state=tk.DISABLED)
+                print(f"[{ts}] {level}: {msg}")
             except Exception:
                 pass
     
@@ -201,26 +189,26 @@ def create_app_class(BleCycleWorker, TileState):
             nb.pack(fill=tk.BOTH, expand=True)
             self.notebook = nb
     
-            demo_tab = tk.Frame(nb, bg=self.colors["bg"])
-            expert_tab = tk.Frame(nb, bg=self.colors["bg"])
-            devices_tab = tk.Frame(nb, bg=self.colors["bg"])
-            settings_tab = tk.Frame(nb, bg=self.colors["bg"])
-    
-            nb.add(demo_tab, text="Demo")
-            nb.add(expert_tab, text="Expert")
-            nb.add(devices_tab, text="Devices")
-            nb.add(settings_tab, text="Settings")
+            tab_demo_frame = tk.Frame(nb, bg=self.colors["bg"])
+            tab_expert_frame = tk.Frame(nb, bg=self.colors["bg"])
+            tab_devices_frame = tk.Frame(nb, bg=self.colors["bg"])
+            tab_settings_frame = tk.Frame(nb, bg=self.colors["bg"])
 
-            self._devices_tab_widget = devices_tab
+            nb.add(tab_demo_frame, text="Demo")
+            nb.add(tab_expert_frame, text="Expert")
+            nb.add(tab_devices_frame, text="Devices")
+            nb.add(tab_settings_frame, text="Settings")
+
+            self._devices_tab_widget = tab_devices_frame
             nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
             # Add logo overlay in tab bar area (top-right corner)
             self._add_logo_to_tab_bar()
     
-            build_ui_demo(self, demo_tab)
-            build_ui_expert(self, expert_tab)
-            build_ui_devices(self, devices_tab)
-            build_ui_settings(self, settings_tab)
+            build_ui_demo(self, tab_demo_frame)
+            build_ui_expert(self, tab_expert_frame)
+            build_ui_devices(self, tab_devices_frame)
+            build_ui_settings(self, tab_settings_frame)
     
         def _add_logo_to_tab_bar(self) -> None:
             """Add SKF logo overlay in the tab bar area (top-right corner)."""
@@ -265,7 +253,7 @@ def create_app_class(BleCycleWorker, TileState):
                 
             except Exception as e:
                 # Silently fail if PIL not available or image loading fails
-                print(f"Could not load logo: {e}")
+                self._log("WARN", f"Could not load logo: {e}")
     
         def _parse_int_var(self, var: tk.StringVar, default: int) -> int:
             try:
@@ -504,7 +492,7 @@ def create_app_class(BleCycleWorker, TileState):
             checklist_labels: Dict[str, tk.Label] = {}
             checklist_titles: Dict[str, str] = {}
             for key, title in checklist_items:
-                label = tk.Label(checklist_frame, text=f"☐ {title}", bg=self.colors["panel"], fg=self.colors["muted"])
+                label = tk.Label(checklist_frame, text=f"{_CHECKLIST_PENDING_SYMBOL} {title}", bg=self.colors["panel"], fg=self.colors["muted"])
                 label.pack(anchor="w")
                 checklist_labels[key] = label
                 checklist_titles[key] = title
@@ -738,16 +726,66 @@ def create_app_class(BleCycleWorker, TileState):
                     self._update_demo_run_controls()
                     if self.auto_run:
                         self._schedule_next_auto(self._auto_generation)
+
+        def _selected_notebook_widget(self):
+            try:
+                selection = self.notebook.select()
+                return self.notebook.nametowidget(selection)
+            except Exception:
+                return None
+
+        def _is_devices_tab_selected(self) -> bool:
+            widget = self._selected_notebook_widget()
+            return widget is not None and widget == getattr(self, "_devices_tab_widget", None)
+
+        @staticmethod
+        def _extract_overall_display_text(rx_text: str) -> Optional[str]:
+            if not rx_text:
+                return None
+            if ("=== OVERALL MEASUREMENTS ===" not in rx_text) and ("=== SESSION ACCEPTED ===" not in rx_text):
+                return None
+
+            filtered_lines = []
+            skip_blank_after_header = False
+            for line in rx_text.split("\n"):
+                if line.startswith("TYPE:") or line.startswith("HEX:"):
+                    skip_blank_after_header = True
+                    continue
+                if skip_blank_after_header and line.strip() == "":
+                    skip_blank_after_header = False
+                    continue
+                filtered_lines.append(line)
+
+            display_text = "\n".join(filtered_lines).strip()
+            return display_text or None
+
+        def _update_demo_header_from_tile(self, tile: Dict[str, Any], st: Any) -> None:
+            self.demo_status_var.set(st.status or "")
+            name_txt = tile.get("name").cget("text") if tile.get("name") else ""
+            addr_txt = tile.get("address").cget("text") if tile.get("address") else ""
+            self.demo_device_var.set((name_txt + " " + addr_txt).strip())
+            if st.checklist:
+                demo_update_timeline(self, st.checklist)
+
+        def _reset_demo_panels_for_new_tile(self) -> None:
+            self.demo_last_overall_values = None
+            self.demo_overall_var.set("•")
+            self.demo_waveform_var.set("•")
+            self.demo_export_var.set("")
+            self._demo_last_plotted_raw = None
+            if self.demo_plot_label is not None:
+                self.demo_plot_label.configure(text="(waiting for waveform...)")
+            if self.demo_plot_canvas is not None and self.demo_plot_fig is not None:
+                ax = self.demo_plot_fig.axes[0] if self.demo_plot_fig.axes else self.demo_plot_fig.add_subplot(111)
+                ax.clear()
+                ax.set_xlabel("Sample")
+                ax.set_ylabel("Amplitude (int16)")
+                ax.grid(True, alpha=0.2)
+                self.demo_plot_canvas.draw()
     
         def _on_tab_changed(self, _evt=None):
             """Start/stop Devices autoscan based on selected tab."""
-            try:
-                sel = self.notebook.select()
-                w = self.notebook.nametowidget(sel)
-            except Exception:
-                w = None
-    
-            if w is not None and w == getattr(self, "_devices_tab_widget", None):
+            if self._is_devices_tab_selected():
                 self._devices_autoscan_start()
             else:
                 self._devices_autoscan_stop()
@@ -771,12 +809,7 @@ def create_app_class(BleCycleWorker, TileState):
         def _devices_autoscan_tick(self):
             self._devices_autoscan_job = None
             # Only scan if we're still on Devices tab
-            try:
-                sel = self.notebook.select()
-                w = self.notebook.nametowidget(sel)
-                if w != getattr(self, "_devices_tab_widget", None):
-                    return
-            except Exception:
+            if not self._is_devices_tab_selected():
                 return
             devices_scan(self)
             self._devices_autoscan_job = self.root.after(self._devices_autoscan_interval_ms, self._devices_autoscan_tick)
@@ -794,7 +827,7 @@ def create_app_class(BleCycleWorker, TileState):
         
         def _apply_tile_update(self, tile_id: int, payload: TileUpdatePayload) -> None:
     
-            # Surface structured errors in Demo Debug
+            # Surface structured errors through debug logger (stdout in debug mode)
             try:
                 err = payload.get("error")
             except Exception:
@@ -849,26 +882,10 @@ def create_app_class(BleCycleWorker, TileState):
     
             # Always refresh compact summary when new data arrives
             try:
-                # If rx_text contains the new formatted view, use it directly
-                if st.rx_text and ("=== OVERALL MEASUREMENTS ===" in st.rx_text or "=== SESSION ACCEPTED ===" in st.rx_text):
-                    # Extract just the formatted section (without TYPE/HEX headers)
-                    display_text = st.rx_text
-                    # Remove TYPE and HEX lines if present
-                    lines = display_text.split('\n')
-                    filtered_lines = []
-                    skip_next = False
-                    for line in lines:
-                        if line.startswith('TYPE:') or line.startswith('HEX:'):
-                            skip_next = True
-                            continue
-                        if skip_next and line.strip() == '':
-                            skip_next = False
-                            continue
-                        filtered_lines.append(line)
-                    display_text = '\n'.join(filtered_lines).strip()
+                display_text = self._extract_overall_display_text(st.rx_text or "")
+                if display_text:
                     tile["overall"].configure(text=display_text)
                 else:
-                    # Fallback to compact rendering from structured overall_values
                     ov_txt = self._format_overalls_compact(st.overall_values, max_lines=8)
                     tile["overall"].configure(text=ov_txt)
             except Exception:
@@ -893,7 +910,7 @@ def create_app_class(BleCycleWorker, TileState):
                     label = labels.get(key)
                     title = titles.get(key, key)
                     if label:
-                        symbol = CHECKLIST_STATE_MAP.get(state, "☐")
+                        symbol = CHECKLIST_STATE_MAP.get(state, _CHECKLIST_PENDING_SYMBOL)
                         label.configure(text=f"{symbol} {title}")
     
     
@@ -916,20 +933,7 @@ def create_app_class(BleCycleWorker, TileState):
                     self._demo_mirrored_tile_id = tile_id
                     active_demo_tile = tile_id
                     try:
-                        self.demo_last_overall_values = None
-                        self.demo_overall_var.set("•")
-                        self.demo_waveform_var.set("•")
-                        self.demo_export_var.set("")
-                        self._demo_last_plotted_raw = None
-                        if self.demo_plot_label is not None:
-                            self.demo_plot_label.configure(text="(waiting for waveform...)")
-                        if self.demo_plot_canvas is not None and self.demo_plot_fig is not None:
-                            ax = self.demo_plot_fig.axes[0] if self.demo_plot_fig.axes else self.demo_plot_fig.add_subplot(111)
-                            ax.clear()
-                            ax.set_xlabel("Sample")
-                            ax.set_ylabel("Amplitude (int16)")
-                            ax.grid(True, alpha=0.2)
-                            self.demo_plot_canvas.draw()
+                        self._reset_demo_panels_for_new_tile()
                     except Exception:
                         pass
     
@@ -938,26 +942,13 @@ def create_app_class(BleCycleWorker, TileState):
                 # Keep overall/waveform from the last connected tile, but reflect current activity
                 # (Scanning/Connecting/Disconnected) so the Demo doesn't look "stuck".
                 try:
-                    self.demo_status_var.set(st.status or "")
-                    name_txt = tile.get("name").cget("text") if tile.get("name") else ""
-                    addr_txt = tile.get("address").cget("text") if tile.get("address") else ""
-                    self.demo_device_var.set((name_txt + " " + addr_txt).strip())
-                    if st.checklist:
-                        demo_update_timeline(self, st.checklist)
+                    self._update_demo_header_from_tile(tile, st)
                 except Exception:
                     pass
                 return
     
             try:
-                self.demo_status_var.set(st.status or "")
-                # device label uses the tile's rendered labels
-                name_txt = tile.get("name").cget("text") if tile.get("name") else ""
-                addr_txt = tile.get("address").cget("text") if tile.get("address") else ""
-                self.demo_device_var.set((name_txt + " " + addr_txt).strip())
-    
-                # timeline
-                if st.checklist:
-                    demo_update_timeline(self, st.checklist)
+                self._update_demo_header_from_tile(tile, st)
     
                 # KPIs driven by structured info + rx_text only for display
                 demo_set_kpis_from_rx_text(self, st.rx_text or "", st.export_info if st.export_info else None)

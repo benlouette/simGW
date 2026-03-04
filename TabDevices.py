@@ -1,12 +1,112 @@
+"""Devices tab UI and scan helpers.
+
+Public API consumed by `ui_application.py`:
+- build_ui_devices
+- devices_scan
+- devices_populate
+- devices_on_select
+
+Responsibilities:
+- render the Devices tab UI
+- perform asynchronous BLE discovery in a worker thread
+- apply address/name filters and update table rows
+- render detailed advertising data for selected rows
+"""
+
 import asyncio
 import threading
 import time
 import tkinter as tk
 from tkinter import ttk
+from typing import Any, Iterable
+
 from ble_filters import adv_matches as ble_adv_matches, format_adv_details as ble_format_adv_details
+
+_SCAN_TIMEOUT_S = 5.0
+_INITIAL_DETAILS_TEXT = "Waiting for scan...\nDevices will appear automatically.\nSelect a device to see details."
+
+
+def _read_device_filters(app) -> tuple[str, str]:
+    """Read current address/name filters from runtime params."""
+    params = app._read_runtime_params()
+    address_prefix = (params[0] if len(params) > 0 else "") or ""
+    name_contains = (params[6] if len(params) > 6 else "") or ""
+    return str(address_prefix), str(name_contains)
+
+
+def _set_scan_status(app, message: str) -> None:
+    try:
+        app.devices_scan_status_var.set(message)
+    except Exception:
+        pass
+
+
+def _set_details_text(app, text: str) -> None:
+    if app.devices_detail is None:
+        return
+    app.devices_detail.configure(state=tk.NORMAL)
+    app.devices_detail.delete("1.0", tk.END)
+    app.devices_detail.insert("1.0", text)
+    app.devices_detail.configure(state=tk.DISABLED)
+
+
+def _iter_discovery_pairs(discovery_result: Any) -> Iterable[tuple[Any, Any]]:
+    """Normalize bleak discovery results to `(device, adv)` pairs."""
+    if isinstance(discovery_result, dict):
+        for _addr, value in discovery_result.items():
+            if isinstance(value, tuple) and len(value) == 2:
+                yield value
+            else:
+                yield value, None
+        return
+
+    if isinstance(discovery_result, list):
+        for value in discovery_result:
+            if isinstance(value, tuple) and len(value) == 2:
+                yield value
+            else:
+                yield value, None
+
+
+def _device_address_upper(device: Any) -> str:
+    try:
+        raw = getattr(device, "address", "") if not isinstance(device, str) else str(device)
+    except Exception:
+        raw = ""
+    return (raw or "").upper()
+
+
+def _device_name(device: Any, advertisement_data: Any) -> str:
+    name = ""
+    try:
+        name = getattr(device, "name", "") if not isinstance(device, str) else ""
+    except Exception:
+        name = ""
+
+    if name:
+        return name
+
+    if advertisement_data is not None:
+        try:
+            return getattr(advertisement_data, "local_name", "") or ""
+        except Exception:
+            return ""
+
+    return ""
+
+
+def _device_rssi(advertisement_data: Any) -> str:
+    if advertisement_data is None:
+        return ""
+    try:
+        value = getattr(advertisement_data, "rssi", None)
+        return "" if value is None else str(value)
+    except Exception:
+        return ""
 
 
 def build_ui_devices(app, parent: tk.Frame) -> None:
+    """Build the Devices tab (filters, table, and advertising details)."""
     header = tk.Frame(parent, bg=app.colors["panel"], highlightbackground=app.colors["border"], highlightthickness=1)
     header.pack(fill=tk.X, padx=16, pady=(16, 10))
 
@@ -76,49 +176,35 @@ def build_ui_devices(app, parent: tk.Frame) -> None:
     detail_in.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
     app.devices_detail = tk.Text(detail_in, wrap="none", bg=app.colors["panel"], fg=app.colors["text"], relief=tk.FLAT)
     app.devices_detail.pack(fill=tk.BOTH, expand=True)
-    app.devices_detail.insert("1.0", "Waiting for scan...\nDevices will appear automatically.\nSelect a device to see details.")
-    app.devices_detail.configure(state=tk.DISABLED)
+    _set_details_text(app, _INITIAL_DETAILS_TEXT)
 
 
 def devices_scan(app) -> None:
+    """Start one background BLE scan and schedule table update on UI thread."""
     if app._devices_scan_in_progress:
         return
 
     app._devices_scan_in_progress = True
 
+    _set_scan_status(app, "🔍 Scanning...")
     try:
-        app.devices_scan_status_var.set("🔍 Scanning...")
         app.root.update_idletasks()
     except Exception:
         pass
 
-    addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, _twf_type = app._read_runtime_params()
-    timeout_s = 5.0
+    scan_timeout_s = _SCAN_TIMEOUT_S
 
     def worker():
         try:
             async def _do():
                 from bleak import BleakScanner
-                res = await BleakScanner.discover(timeout=timeout_s, return_adv=True)
-                pairs = []
-                if isinstance(res, dict):
-                    for _addr, val in res.items():
-                        if isinstance(val, tuple) and len(val) == 2:
-                            pairs.append(val)
-                        else:
-                            pairs.append((val, None))
-                elif isinstance(res, list):
-                    for item in res:
-                        if isinstance(item, tuple) and len(item) == 2:
-                            pairs.append(item)
-                        else:
-                            pairs.append((item, None))
-                return pairs
+                result = await BleakScanner.discover(timeout=scan_timeout_s, return_adv=True)
+                return list(_iter_discovery_pairs(result))
 
             pairs = asyncio.run(_do())
             app.root.after(0, lambda: devices_populate(app, pairs))
         except Exception as exc:
-            app.root.after(0, lambda: app.devices_scan_status_var.set(f"❌ Error: {type(exc).__name__}"))
+            app.root.after(0, lambda: _set_scan_status(app, f"❌ Error: {type(exc).__name__}"))
         finally:
             app.root.after(0, lambda: setattr(app, '_devices_scan_in_progress', False))
 
@@ -126,21 +212,18 @@ def devices_scan(app) -> None:
 
 
 def devices_populate(app, pairs) -> None:
+    """Populate/refresh device rows from discovery `(device, adv)` pairs."""
     if not hasattr(app, "_devices_by_addr"):
         app._devices_by_addr = {}
 
     now_ms = int(time.time() * 1000)
-    addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, _twf_type = app._read_runtime_params()
+    addr_prefix, name_contains = _read_device_filters(app)
 
     added = 0
     updated = 0
 
-    for (dev, adv) in pairs:
-        try:
-            addr = getattr(dev, "address", "") if not isinstance(dev, str) else str(dev)
-            addr = (addr or "").upper()
-        except Exception:
-            continue
+    for dev, adv in pairs:
+        addr = _device_address_upper(dev)
         if not addr:
             continue
 
@@ -148,24 +231,8 @@ def devices_populate(app, pairs) -> None:
         if not ok:
             continue
 
-        name = ""
-        try:
-            name = getattr(dev, "name", "") if not isinstance(dev, str) else ""
-        except Exception:
-            name = ""
-        if not name and adv is not None:
-            try:
-                name = getattr(adv, "local_name", "") or ""
-            except Exception:
-                name = ""
-
-        rssi = ""
-        if adv is not None:
-            try:
-                rv = getattr(adv, "rssi", None)
-                rssi = "" if rv is None else str(rv)
-            except Exception:
-                rssi = ""
+        name = _device_name(dev, adv)
+        rssi = _device_rssi(adv)
 
         mark = "✔"
         prev = app._devices_by_addr.get(addr)
@@ -190,12 +257,13 @@ def devices_populate(app, pairs) -> None:
 
     total = len(app._devices_by_addr)
     if added > 0:
-        app.devices_scan_status_var.set(f"✓ {total} devices (+{added} new)")
+        _set_scan_status(app, f"✓ {total} devices (+{added} new)")
     else:
-        app.devices_scan_status_var.set(f"✓ {total} devices")
+        _set_scan_status(app, f"✓ {total} devices")
 
 
 def devices_on_select(app, _evt) -> None:
+    """Render advertising details for selected row."""
     sel = app.devices_tree.selection()
     if not sel:
         return
@@ -207,8 +275,5 @@ def devices_on_select(app, _evt) -> None:
         return
     dev = item.get("dev")
     adv = item.get("adv")
-    txt = ble_format_adv_details(dev, adv)
-    app.devices_detail.configure(state=tk.NORMAL)
-    app.devices_detail.delete("1.0", tk.END)
-    app.devices_detail.insert("1.0", txt)
-    app.devices_detail.configure(state=tk.DISABLED)
+    details_text = ble_format_adv_details(dev, adv)
+    _set_details_text(app, details_text)

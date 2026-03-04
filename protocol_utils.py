@@ -34,7 +34,7 @@ PHASE_CLOSE_SESSION = "close_session"
 PHASE_DISCONNECTED = "disconnected"
 PHASE_ERROR = "error"
 
-_PHASE_ORDER = [
+PHASE_ORDER = (
     PHASE_SCANNING,
     PHASE_CONNECTING,
     PHASE_CONNECTED,
@@ -43,7 +43,10 @@ _PHASE_ORDER = [
     PHASE_CLOSE_SESSION,
     PHASE_DISCONNECTED,
     PHASE_ERROR,
-]
+)
+
+# Backward compatibility alias (prefer PHASE_ORDER in new code)
+_PHASE_ORDER = PHASE_ORDER
 
 
 def phase_rank(phase: str) -> int:
@@ -57,6 +60,6 @@ def phase_rank(phase: str) -> int:
         Integer rank (0-based index), or -1 if phase is unknown
     """
     try:
-        return _PHASE_ORDER.index(phase)
+        return PHASE_ORDER.index(phase)
     except ValueError:
         return -1
