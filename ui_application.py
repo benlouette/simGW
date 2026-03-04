@@ -18,40 +18,51 @@ Performance optimizations:
 - Fixed 5-second scan timeout
 - Monotonic phase progression per tile
 """
-import asyncio
 import os
-import re
-import threading
 import time
 import tkinter as tk
 from queue import Queue, Empty
 from tkinter import ttk, messagebox
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 try:
     import matplotlib.pyplot as plt
-    from matplotlib.figure import Figure
-    try:
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-    except Exception:
-        FigureCanvasTkAgg = None
 except Exception:
     plt = None
-    Figure = None
-    FigureCanvasTkAgg = None
 
 from protocol_utils import AUTO_RESTART_DELAY_MS
 from ui_config import (
     UI_POLL_INTERVAL_MS, CHECKLIST_ITEMS, CHECKLIST_STATE_MAP, 
-    MANUAL_ACTIONS, UI_COLORS
+    UI_COLORS
 )
-from ble_config import (
-    MEASUREMENT_TYPE_ACCELERATION_TWF, MEASUREMENT_TYPE_VELOCITY_TWF, 
-    MEASUREMENT_TYPE_ENVELOPER3_TWF
-)
-from ble_filters import adv_matches as ble_adv_matches, format_adv_details as ble_format_adv_details
+from ble_config import MEASUREMENT_TYPE_ACCELERATION_TWF
 from data_exporters import WaveformParser
 from ui_helpers import apply_windows_dark_mode, apply_dark_theme
+from ui_tabs.devices_tab import (
+    build_ui_devices,
+    devices_scan,
+    devices_populate,
+    devices_on_select,
+    devices_set_details,
+)
+from ui_tabs.settings_tab import build_ui_settings
+from ui_tabs.demo_tab import (
+    build_ui_demo,
+    demo_clear_debug,
+    demo_reset_ui_state,
+    demo_style_plot_axes,
+    demo_plot_waveform_from_raw_export,
+    demo_update_timeline,
+    demo_set_kpis_from_rx_text,
+    demo_render_summary,
+)
+from ui_tabs.expert_tab import (
+    build_ui_expert,
+    wrap_buttons,
+    build_field,
+    on_mouse_wheel,
+)
+from ui_events import TileUpdatePayload, UiEvent
 WaveformExportTools = WaveformParser
 
 
@@ -66,7 +77,7 @@ def create_app_class(BleCycleWorker, TileState):
             self.root.geometry("1000x800")
             self.root.configure(bg="#0f1115")
     
-            self.ui_queue: Queue = Queue()
+            self.ui_queue: Queue[UiEvent] = Queue()
             self.worker = BleCycleWorker(self.ui_queue)
             self.worker.start()
     
@@ -79,7 +90,7 @@ def create_app_class(BleCycleWorker, TileState):
             self.latest_export_info = None
             self.latest_overall_values = None
             self.tile_export_info: Dict[int, dict] = {}
-            self.tile_state: Dict[int, TileState] = {}
+            self.tile_state: Dict[int, Any] = {}
             self._demo_mirrored_tile_id: Optional[int] = None
             self._demo_last_plotted_raw: str = ""
     
@@ -167,69 +178,12 @@ def create_app_class(BleCycleWorker, TileState):
         
         def _demo_clear_debug(self) -> None:
             """Clear the Demo debug console."""
-            try:
-                if self.demo_debug is None:
-                    return
-                self.demo_debug.configure(state=tk.NORMAL)
-                self.demo_debug.delete("1.0", tk.END)
-                self.demo_debug.configure(state=tk.DISABLED)
-            except Exception:
-                pass
+            demo_clear_debug(self)
     
     
         def _demo_reset_ui_state(self, keep_debug: bool = True) -> None:
             """Reset Demo tab UI state (KPIs, timeline, summary, plot)."""
-            try:
-                self.demo_status_var.set("Idle")
-                self.demo_device_var.set("")
-                self.demo_export_var.set("")
-                self.demo_overall_var.set("•")
-                self.demo_waveform_var.set("•")
-            except Exception:
-                pass
-    
-            # Clear summary box (if present)
-            try:
-                if self.demo_summary is not None:
-                    self.demo_summary.configure(state=tk.NORMAL)
-                    self.demo_summary.delete("1.0", tk.END)
-                    self.demo_summary.insert(tk.END, "•\n")
-                    self.demo_summary.configure(state=tk.DISABLED)
-            except Exception:
-                pass
-    
-            # Reset timeline to pending
-            try:
-                self.demo_checklist_state = {key: "pending" for key, _title in CHECKLIST_ITEMS}
-                self._demo_update_timeline({})
-            except Exception:
-                pass
-    
-            # Reset plot
-            try:
-                if getattr(self, "demo_plot_label", None) is not None:
-                    self.demo_plot_label.config(text="(waiting for waveform...)")
-                if getattr(self, "demo_plot_fig", None) is not None:
-                    ax = self.demo_plot_fig.axes[0] if self.demo_plot_fig.axes else self.demo_plot_fig.add_subplot(111)
-                    ax.clear()
-                    ax.set_xlabel("Sample")
-                    ax.set_ylabel("Value")
-                    ax.grid(True, alpha=0.2)
-                    if getattr(self, "demo_plot_canvas", None) is not None:
-                        self.demo_plot_canvas.draw()
-            except Exception:
-                pass
-    
-            # Reset last cached demo data
-            try:
-                self.demo_last_overall_values = None
-                self.demo_last_overall_rx_text = ""
-                self.demo_last_wave_rx_text = ""
-            except Exception:
-                pass
-    
-            if not keep_debug:
-                self._demo_clear_debug()
+            demo_reset_ui_state(self, keep_debug=keep_debug)
     
     
     
@@ -267,548 +221,34 @@ def create_app_class(BleCycleWorker, TileState):
             return card, start_btn, stop_btn
     
         def _build_ui_demo(self, parent: tk.Frame) -> None:
-            """Demo-friendly UI: no hex dumps, just KPIs + a timeline + a short summary."""
-            panel = tk.Frame(parent, bg=self.colors["bg"])
-            panel.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
-            # Header
-            _card, self.demo_start_button, self.demo_stop_button = self._ui_build_run_header_card(panel)
-    
-            # Ensure buttons reflect current state
-            self._update_demo_run_controls()
-    
-            # KPI grid
-            kpi = tk.Frame(panel, bg=self.colors["bg"])
-            kpi.pack(fill=tk.X, pady=(0, 12))
-    
-            def _kpi_card(title: str, var: tk.StringVar) -> None:
-                c = tk.Frame(kpi, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-                c.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
-                ci = tk.Frame(c, bg=self.colors["panel"])
-                ci.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
-                tk.Label(ci, text=title, bg=self.colors["panel"], fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
-                tk.Label(ci, textvariable=var, bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(2, 0))
-    
-            _kpi_card("Status", self.demo_status_var)
-            _kpi_card("Device", self.demo_device_var)
-            _kpi_card("Overall", self.demo_overall_var)
-            _kpi_card("Waveform", self.demo_waveform_var)
-    
-            # Timeline (driven by checklist updates from the Expert cycle)
-            tl_box = tk.Frame(panel, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            tl_box.pack(fill=tk.X, pady=(0, 12))
-            tl_in = tk.Frame(tl_box, bg=self.colors["panel"])
-            tl_in.pack(fill=tk.X, padx=14, pady=10)
-    
-            tk.Label(tl_in, text="Timeline", bg=self.colors["panel"], fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
-    
-            tl_row = tk.Frame(tl_in, bg=self.colors["panel"])
-            tl_row.pack(fill=tk.X, pady=(6, 0))
-    
-            self.demo_timeline_labels = {}
-            for key, title in CHECKLIST_ITEMS:
-                item = tk.Frame(tl_row, bg=self.colors["panel"])
-                item.pack(side=tk.LEFT, padx=(0, 14))
-    
-                dot = tk.Label(item, text="●", bg=self.colors["panel"], fg=self.colors["muted"], font=("Segoe UI", 12, "bold"))
-                dot.pack(side=tk.LEFT)
-                txt = tk.Label(item, text=title, bg=self.colors["panel"], fg=self.colors["muted"], font=("Segoe UI", 10))
-                txt.pack(side=tk.LEFT, padx=(6, 0))
-    
-                self.demo_timeline_labels[key] = (dot, txt)
-    
-            # Splitter: Overall (summary) on top, Waveform plot below (resizable)
-            panes = tk.PanedWindow(
-                panel,
-                orient=tk.VERTICAL,
-                bg=self.colors["bg"],
-                sashrelief=tk.RAISED,
-                bd=0,
-            )
-            panes.pack(fill=tk.BOTH, expand=True)
-    
-            # --- Overall / Summary (top pane)
-            sum_box = tk.Frame(panes, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            sum_in = tk.Frame(sum_box, bg=self.colors["panel"])
-            sum_in.pack(fill=tk.BOTH, expand=True, padx=14, pady=12)
-    
-            tk.Label(
-                sum_in,
-                text="Overalls",
-                bg=self.colors["panel"],
-                fg=self.colors["text"],
-                font=("Segoe UI", 11, "bold"),
-            ).pack(anchor="w")
-    
-            self.demo_summary = tk.Text(
-                sum_in,
-                height=13,
-                wrap=tk.WORD,
-                bg=self.colors["panel"],
-                fg=self.colors["text"],
-                bd=0,
-            )
-            self.demo_summary.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-            self.demo_summary.configure(state=tk.DISABLED)
-    
-            # --- Waveform plot (bottom pane)
-            plot_box = tk.Frame(panes, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            plot_in = tk.Frame(plot_box, bg=self.colors["panel"])
-            plot_in.pack(fill=tk.BOTH, expand=True, padx=14, pady=12)
-    
-            header_row = tk.Frame(plot_in, bg=self.colors["panel"])
-            header_row.pack(fill=tk.X)
-    
-            tk.Label(
-                header_row,
-                text="Waveform",
-                bg=self.colors["panel"],
-                fg=self.colors["text"],
-                font=("Segoe UI", 11, "bold"),
-            ).pack(side=tk.LEFT)
-    
-            self.demo_plot_label = tk.Label(
-                header_row,
-                text="(waiting for waveform...)",
-                bg=self.colors["panel"],
-                fg=self.colors["muted"],
-                font=("Segoe UI", 10),
-            )
-            self.demo_plot_label.pack(side=tk.LEFT, padx=(10, 0))
-    
-            plot_area = tk.Frame(plot_in, bg=self.colors["panel"])
-            plot_area.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-    
-            if Figure is None or FigureCanvasTkAgg is None:
-                tk.Label(
-                    plot_area,
-                    text="Matplotlib/TkAgg not available. Install matplotlib and ensure Tk support to view the waveform plot here.",
-                    bg=self.colors["panel"],
-                    fg=self.colors["muted"],
-                    justify=tk.LEFT,
-                    wraplength=900,
-                    font=("Segoe UI", 10),
-                ).pack(anchor="w")
-                self.demo_plot_fig = None
-                self.demo_plot_canvas = None
-                self.demo_plot_widget = None
-            else:
-                self.demo_plot_fig = Figure(figsize=(7.5, 2.3), dpi=100)
-                self.demo_plot_fig.subplots_adjust(bottom=0.15, top=0.95)
-                ax = self.demo_plot_fig.add_subplot(111)
-                ax.set_xlabel("Sample")
-                ax.set_ylabel("Value")
-                ax.grid(True, alpha=0.2)
-                self._demo_style_plot_axes(ax)
-    
-                self.demo_plot_canvas = FigureCanvasTkAgg(self.demo_plot_fig, master=plot_area)
-                self.demo_plot_widget = self.demo_plot_canvas.get_tk_widget()
-                try:
-                    self.demo_plot_widget.configure(bg=self.colors.get("panel", "#171a21"))
-                except Exception:
-                    pass
-                self.demo_plot_widget.pack(fill=tk.BOTH, expand=True)
-    
-            # Add panes with initial proportions (user can resize with the sash)
-            panes.add(sum_box, stretch="always")
-            panes.add(plot_box, stretch="always")
-            # Debug console (last events/errors) • essential for diagnosing parsing/flow issues
-            dbg_box = tk.Frame(panel, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            dbg_box.pack(fill=tk.BOTH, expand=False, pady=(12, 0))
-            dbg_in = tk.Frame(dbg_box, bg=self.colors["panel"])
-            dbg_in.pack(fill=tk.BOTH, expand=True, padx=14, pady=10)
-    
-            hdr = tk.Frame(dbg_in, bg=self.colors["panel"])
-            hdr.pack(fill=tk.X)
-            tk.Label(hdr, text="Debug", bg=self.colors["panel"], fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
-    
-            ttk.Button(hdr, text="Clear", command=self._demo_clear_debug).pack(side=tk.RIGHT)
-    
-            self.demo_debug = tk.Text(
-                dbg_in,
-                height=7,
-                wrap=tk.NONE,
-                bg=self.colors["panel"],
-                fg=self.colors["text"],
-                bd=0,
-                highlightthickness=0,
-                font=("Consolas", 9),
-            )
-            self.demo_debug.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-            self.demo_debug.configure(state=tk.DISABLED)
+            build_ui_demo(self, parent)
     
     
         def _demo_style_plot_axes(self, ax) -> None:
             """Apply dark-theme styling to the embedded matplotlib axes."""
-            try:
-                fc = self.colors.get("panel", "#171a21")
-                tc = self.colors.get("text", "#e6e6e6")
-                mc = self.colors.get("muted", "#8b93a1")
-                bc = self.colors.get("border", "#2a2f3a")
-    
-                # Figure + axes background
-                if getattr(self, "demo_plot_fig", None) is not None:
-                    self.demo_plot_fig.patch.set_facecolor(fc)
-                ax.set_facecolor(fc)
-    
-                # Titles / labels / ticks
-                ax.title.set_color(tc)
-                ax.xaxis.label.set_color(mc)
-                ax.yaxis.label.set_color(mc)
-                ax.tick_params(colors=mc)
-    
-                # Spines + grid
-                for sp in ax.spines.values():
-                    sp.set_color(bc)
-                try:
-                    ax.grid(True, alpha=0.25, color=bc)
-                except Exception:
-                    ax.grid(True, alpha=0.25)
-            except Exception:
-                pass
-    
-        # Tags for nicer key/value rendering
-            self.demo_summary.tag_configure("k", foreground=self.colors["muted"], font=("Segoe UI", 10, "bold"))
-            self.demo_summary.tag_configure("v", foreground=self.colors["text"], font=("Segoe UI", 10, "normal"))
-            self.demo_summary.tag_configure("h", foreground=self.colors["text"], font=("Segoe UI", 10, "bold"))
-    
-            # Initialize timeline colors
-            self._demo_update_timeline({})
+            demo_style_plot_axes(self, ax)
     
         def _demo_plot_waveform_from_raw_export(self, raw_path: str) -> None:
             """Render waveform in the embedded Demo matplotlib canvas from a raw export .bin file."""
-            if not raw_path:
-                return
-            if self.demo_plot_canvas is None or self.demo_plot_fig is None:
-                return
-            if not os.path.isfile(raw_path):
-                raise FileNotFoundError(raw_path)
-    
-            y, meta = WaveformExportTools.extract_true_waveform_samples(raw_path)
-    
-            # Update label with detailed info
-            try:
-                n = int(meta.get("samples") or len(y))
-            except Exception:
-                n = len(y)
-            
-            # Extract metadata
-            fs_hz = meta.get("fs_hz", 0)
-            twf_type = meta.get("twf_type", "Unknown")
-            data_type = meta.get("data_type", "S16")
-            
-            # Build info string
-            info_parts = [f"{n} samples"]
-            if fs_hz:
-                info_parts.append(f"{int(fs_hz)} Hz")
-            info_parts.append(data_type)
-            info_parts.append(twf_type)
-            info_parts.append(os.path.basename(raw_path))
-            
-            if self.demo_plot_label is not None:
-                self.demo_plot_label.configure(text=" • ".join(info_parts))
-    
-            ax = self.demo_plot_fig.axes[0] if self.demo_plot_fig.axes else self.demo_plot_fig.add_subplot(111)
-            ax.clear()
-            ax.plot(y)
-            ax.set_xlabel("Sample")
-            ax.set_ylabel("Amplitude (int16)")
-            ax.grid(True, alpha=0.2)
-            self._demo_style_plot_axes(ax)
-            self.demo_plot_canvas.draw()
+            demo_plot_waveform_from_raw_export(self, raw_path)
     
     
         def _build_ui_devices(self, parent: tk.Frame) -> None:
-            header = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            header.pack(fill=tk.X, padx=16, pady=(16, 10))
-    
-            left = tk.Frame(header, bg=self.colors["panel"])
-            left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=12, pady=12)
-            tk.Label(left, text="Devices & Advertising", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 14, "bold")).pack(anchor="w")
-            tk.Label(left, text="Auto-scan every 3s (5s timeout)", bg=self.colors["panel"], fg=self.colors["muted"]).pack(anchor="w", pady=(2, 0))
-
-            status_frame = tk.Frame(header, bg=self.colors["panel"])
-            status_frame.pack(side=tk.RIGHT, padx=12, pady=12)
-            tk.Label(status_frame, textvariable=self.devices_scan_status_var, bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 10, "bold")).pack()
-
-            # Filters row
-            filters = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            filters.pack(fill=tk.X, padx=16, pady=(0, 10))
-            filters_in = tk.Frame(filters, bg=self.colors["panel"])
-            filters_in.pack(fill=tk.X, padx=12, pady=8)
-
-            tk.Label(filters_in, text="\U0001F50D Filters:", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
-
-            tk.Label(filters_in, text="Address:", bg=self.colors["panel"], fg=self.colors["muted"]).pack(side=tk.LEFT, padx=(0, 4))
-            ttk.Entry(filters_in, textvariable=self.address_prefix_var, width=15).pack(side=tk.LEFT, padx=(0, 12))
-
-            tk.Label(filters_in, text="Name:", bg=self.colors["panel"], fg=self.colors["muted"]).pack(side=tk.LEFT, padx=(0, 4))
-            ttk.Entry(filters_in, textvariable=self.adv_name_contains_var, width=15).pack(side=tk.LEFT, padx=(0, 12))
-
-            tk.Label(filters_in, text="Service UUID:", bg=self.colors["panel"], fg=self.colors["muted"]).pack(side=tk.LEFT, padx=(0, 4))
-            ttk.Entry(filters_in, textvariable=self.adv_service_uuid_contains_var, width=12).pack(side=tk.LEFT)
-
-            body = tk.Frame(parent, bg=self.colors["bg"])
-            body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
-
-            # Left: Devices list with its own header
-            left_panel = tk.Frame(body, bg=self.colors["bg"])
-            left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
-
-            list_header = tk.Frame(left_panel, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            list_header.pack(fill=tk.X, pady=(0, 6))
-            tk.Label(list_header, text="\U0001F4E1 BLE Devices", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 10, "bold")).pack(padx=10, pady=6, anchor="w")
-
-            cols = ("address", "name", "rssi", "matched")
-            tree = ttk.Treeview(left_panel, columns=cols, show="headings", height=14)
-            tree.heading("address", text="Address")
-            tree.heading("name", text="Name")
-            tree.heading("rssi", text="RSSI")
-            tree.heading("matched", text="Match")
-            tree.column("address", width=180, anchor="w")
-            tree.column("name", width=220, anchor="w")
-            tree.column("rssi", width=80, anchor="e")
-            tree.column("matched", width=80, anchor="center")
-            
-            # Apply dark theme to treeview
-            tree_style = ttk.Style()
-            tree_style.configure("Treeview",
-                               background=self.colors["panel"],
-                               foreground=self.colors["text"],
-                               fieldbackground=self.colors["panel"],
-                               borderwidth=0)
-            tree_style.configure("Treeview.Heading",
-                               background=self.colors["panel_alt"],
-                               foreground=self.colors["text"],
-                               borderwidth=1,
-                               relief="flat")
-            tree_style.map("Treeview",
-                         background=[("selected", self.colors["accent"])],
-                         foreground=[("selected", "#ffffff")])
-            
-            tree.pack(fill=tk.BOTH, expand=True)
-
-            tree.bind("<<TreeviewSelect>>", self._devices_on_select)
-            self.devices_tree = tree
-
-            # Right: Advertising details with its own header
-            right_panel = tk.Frame(body, bg=self.colors["bg"])
-            right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(6, 0))
-
-            detail_header = tk.Frame(right_panel, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            detail_header.pack(fill=tk.X, pady=(0, 6))
-            tk.Label(detail_header, text="\U0001F4CB Advertising Details", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 10, "bold")).pack(padx=10, pady=6, anchor="w")
-
-            detail = tk.Frame(right_panel, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            detail.pack(fill=tk.BOTH, expand=True)
-
-            detail_in = tk.Frame(detail, bg=self.colors["panel"])
-            detail_in.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
-            self.devices_detail = tk.Text(detail_in, wrap="none", bg=self.colors["panel"], fg=self.colors["text"], relief=tk.FLAT)
-            self.devices_detail.pack(fill=tk.BOTH, expand=True)
-            self.devices_detail.insert("1.0", "Waiting for scan...\nDevices will appear automatically.\nSelect a device to see details.")
-            self.devices_detail.configure(state=tk.DISABLED)
+            build_ui_devices(self, parent)
 
         def _build_ui_settings(self, parent: tk.Frame) -> None:
-            header = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            header.pack(fill=tk.X, padx=16, pady=(16, 10))
-
-            left = tk.Frame(header, bg=self.colors["panel"])
-            left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=12, pady=12)
-            tk.Label(left, text="Settings", bg=self.colors["panel"], fg=self.colors["text"], font=("Segoe UI", 14, "bold")).pack(anchor="w")
-            tk.Label(left, text="Configuration and defaults", bg=self.colors["panel"], fg=self.colors["muted"]).pack(anchor="w", pady=(2, 0))
-
-            body = tk.Frame(parent, bg=self.colors["bg"])
-            body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
-
-            # Keep settings simple here: record + session dir + timeouts + MTU.
-            box = tk.Frame(body, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            box.pack(fill=tk.X)
-            inner = tk.Frame(box, bg=self.colors["panel"])
-            inner.pack(fill=tk.X, padx=12, pady=12)
-
-            ttk.Checkbutton(inner, text="Record sessions", variable=self.record_sessions_var).grid(row=0, column=0, sticky="w", padx=(0, 12))
-            tk.Label(inner, text="Session dir", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=0, column=1, sticky="e", padx=(12, 6))
-            ttk.Entry(inner, textvariable=self.session_root_var, width=24).grid(row=0, column=2, sticky="w")
-
-            tk.Label(inner, text="Scan timeout (s)", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=1, column=0, sticky="w", pady=(10, 0))
-            ttk.Entry(inner, textvariable=self.scan_timeout_var, width=10).grid(row=1, column=1, sticky="w", pady=(10, 0))
-
-            tk.Label(inner, text="RX timeout (s)", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=1, column=2, sticky="w", padx=(12, 0), pady=(10, 0))
-            ttk.Entry(inner, textvariable=self.rx_timeout_var, width=10).grid(row=1, column=3, sticky="w", pady=(10, 0))
-
-            tk.Label(inner, text="MTU", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=2, column=0, sticky="w", pady=(10, 0))
-            ttk.Entry(inner, textvariable=self.mtu_var, width=10).grid(row=2, column=1, sticky="w", pady=(10, 0))
-
-            # TWF Type selector
-            tk.Label(inner, text="Waveform type", bg=self.colors["panel"], fg=self.colors["muted"]).grid(row=3, column=0, sticky="w", pady=(10, 0))
-            twf_combo = ttk.Combobox(inner, textvariable=self.twf_type_var, width=24, state="readonly")
-            twf_combo['values'] = (
-                f"{MEASUREMENT_TYPE_ACCELERATION_TWF} - Acceleration TWF",
-                f"{MEASUREMENT_TYPE_VELOCITY_TWF} - Velocity TWF",
-                f"{MEASUREMENT_TYPE_ENVELOPER3_TWF} - Enveloper3 TWF"
-            )
-            twf_combo.current(0)  # Default to Acceleration
-            twf_combo.grid(row=3, column=1, columnspan=2, sticky="w", pady=(10, 0))
-
-            util = tk.Frame(body, bg=self.colors["bg"])
-            util.pack(fill=tk.X, pady=(12, 0))
-            ttk.Button(util, text="Clear Logs", command=self._clear_tiles).pack(side=tk.LEFT)
-            ttk.Button(util, text="Stop Auto", command=self._stop_auto).pack(side=tk.LEFT, padx=(8, 0))
+            build_ui_settings(self, parent)
         
         def _devices_scan(self) -> None:
-            """Trigger one scan pass and merge results into the Devices table (no clear, no dup)."""
-            # Prevent concurrent scans (fix thread leak)
-            if self._devices_scan_in_progress:
-                return
-            
-            self._devices_scan_in_progress = True
-            
-            try:
-                self.devices_scan_status_var.set("\U0001F50D Scanning...")
-                self.root.update_idletasks()
-            except Exception:
-                pass
-
-            # Read current filters (use fixed 5s timeout)
-            addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, svc_contains, mfg_id_hex, mfg_data_hex, _twf_type = self._read_runtime_params()
-            timeout_s = 5.0  # Fixed 5 second timeout
-
-            def worker():
-                try:
-                    async def _do():
-                        from bleak import BleakScanner
-                        # return_adv=True gives (device, adv) pairs on most backends
-                        res = await BleakScanner.discover(timeout=timeout_s, return_adv=True)
-                        pairs = []
-                        if isinstance(res, dict):
-                            for _addr, val in res.items():
-                                if isinstance(val, tuple) and len(val) == 2:
-                                    pairs.append(val)
-                                else:
-                                    pairs.append((val, None))
-                        elif isinstance(res, list):
-                            for item in res:
-                                if isinstance(item, tuple) and len(item) == 2:
-                                    pairs.append(item)
-                                else:
-                                    pairs.append((item, None))
-                        return pairs
-
-                    pairs = asyncio.run(_do())
-                    self.root.after(0, lambda: self._devices_populate(pairs))
-                except Exception as exc:
-                    # Do not crash autoscan; just report
-                    self.root.after(0, lambda: self.devices_scan_status_var.set(f"\u274c Error: {type(exc).__name__}"))
-                finally:
-                    # Always reset flag when scan completes
-                    self.root.after(0, lambda: setattr(self, '_devices_scan_in_progress', False))
-
-            threading.Thread(target=worker, daemon=True).start()
+            devices_scan(self)
 
         def _devices_populate(self, pairs):
-            """Merge scan results into the tree (no clear, no duplicates)."""
-            if not hasattr(self, "_devices_by_addr"):
-                self._devices_by_addr = {}  # addr -> dict(dev=..., adv=..., last_seen_ms=...)
-    
-            now_ms = int(time.time() * 1000)
-    
-            # apply filters consistently with the rest of the app
-            addr_prefix, _mtu, _scan_timeout, _rx_timeout, _rec, _sess, name_contains, svc_contains, mfg_id_hex, mfg_data_hex, _twf_type = self._read_runtime_params()
-    
-            added = 0
-            updated = 0
-            matched = 0
-    
-            for (dev, adv) in pairs:
-                try:
-                    addr = getattr(dev, "address", "") if not isinstance(dev, str) else str(dev)
-                    addr = (addr or "").upper()
-                except Exception:
-                    continue
-                if not addr:
-                    continue
-    
-                ok = ble_adv_matches(dev, adv, addr_prefix, name_contains, svc_contains, mfg_id_hex, mfg_data_hex)
-                
-                # Skip devices that don't match filters
-                if not ok:
-                    continue
-                
-                matched += 1
-
-                name = ""
-                try:
-                    name = getattr(dev, "name", "") if not isinstance(dev, str) else ""
-                except Exception:
-                    name = ""
-                if not name and adv is not None:
-                    try:
-                        name = getattr(adv, "local_name", "") or ""
-                    except Exception:
-                        name = ""
-
-                rssi = ""
-                if adv is not None:
-                    try:
-                        rv = getattr(adv, "rssi", None)
-                        rssi = "" if rv is None else str(rv)
-                    except Exception:
-                        rssi = ""
-
-                mark = "✔"  # All displayed devices match
-
-                prev = self._devices_by_addr.get(addr)
-                self._devices_by_addr[addr] = {"dev": dev, "adv": adv, "last_seen_ms": now_ms}
-
-                if prev is None:
-                    try:
-                        # iid = address => stable mapping (no mismatch)
-                        self.devices_tree.insert("", "end", iid=addr, values=(addr, name, rssi, mark))
-                        added += 1
-                    except Exception:
-                        # if iid already exists for some reason, fall back to update
-                        try:
-                            self.devices_tree.item(addr, values=(addr, name, rssi, mark))
-                            updated += 1
-                        except Exception:
-                            pass
-                else:
-                    try:
-                        self.devices_tree.item(addr, values=(addr, name, rssi, mark))
-                        updated += 1
-                    except Exception:
-                        pass
-    
-            # Update status with results (don't overwrite selected device details!)
-            total = len(self._devices_by_addr)
-            if added > 0:
-                self.devices_scan_status_var.set(f"\u2713 {total} devices (+{added} new)")
-            else:
-                self.devices_scan_status_var.set(f"\u2713 {total} devices")
+            devices_populate(self, pairs)
         def _devices_on_select(self, _evt):
-            sel = self.devices_tree.selection()
-            if not sel:
-                return
-            addr = sel[0]
-            if not hasattr(self, "_devices_by_addr"):
-                return
-            item = self._devices_by_addr.get(addr)
-            if not item:
-                return
-            dev = item.get("dev")
-            adv = item.get("adv")
-            txt = ble_format_adv_details(dev, adv)
-            # Display device details (don't use _devices_set_details to avoid confusion)
-            self.devices_detail.configure(state=tk.NORMAL)
-            self.devices_detail.delete("1.0", tk.END)
-            self.devices_detail.insert("1.0", txt)
-            self.devices_detail.configure(state=tk.DISABLED)
+            devices_on_select(self, _evt)
         def _devices_set_details(self, txt: str):
-            """Legacy method - now only used for initial message. Don't use for stats!"""
-            self.devices_detail.configure(state=tk.NORMAL)
-            self.devices_detail.delete("1.0", tk.END)
-            self.devices_detail.insert("1.0", txt)
-            self.devices_detail.configure(state=tk.DISABLED)
+            """Legacy method - now delegated to ui_tabs.devices_tab."""
+            devices_set_details(self, txt)
     
         def _build_ui(self) -> None:
             """Build a 4-tab UI (Demo / Expert / Devices / Settings) without changing backend logic."""
@@ -884,295 +324,28 @@ def create_app_class(BleCycleWorker, TileState):
     
         def _demo_update_timeline(self, checklist_update: Dict[str, str]) -> None:
             """Update the Demo timeline dots based on the merged checklist state."""
-            # Merge incremental updates
-            if checklist_update:
-                for k, v in checklist_update.items():
-                    if k in self.demo_checklist_state:
-                        self.demo_checklist_state[k] = v
-    
-            # Apply colors
-            for key, _title in CHECKLIST_ITEMS:
-                state = self.demo_checklist_state.get(key, "pending")
-                dot, txt = self.demo_timeline_labels.get(key, (None, None))
-                if dot is None or txt is None:
-                    continue
-    
-                if state == "done":
-                    fg = self.colors.get("ok", self.colors["accent_alt"])
-                    tfg = self.colors["text"]
-                elif state == "in_progress":
-                    fg = self.colors["accent_alt"]
-                    tfg = self.colors["text"]
-                else:
-                    fg = self.colors["muted"]
-                    tfg = self.colors["muted"]
-    
-                dot.configure(fg=fg)
-                txt.configure(fg=tfg)
+            demo_update_timeline(self, checklist_update)
     
         def _demo_set_kpis_from_rx_text(self, rx_text: str, export_info: Optional[dict]) -> None:
             """Update Demo KPIs (Overall/Waveform) based on the latest received message text."""
-            if not rx_text:
-                return
-            # Identify message type
-            msg_type = ""
-            m = re.search(r"^TYPE:\s*([^\n]+)", rx_text.strip(), flags=re.MULTILINE)
-            if m:
-                msg_type = m.group(1).strip()
-    
-            # Waveform KPI: prefer export_info when available
-            if export_info:
-                # If samples were exported we consider waveform OK
-                if export_info.get("samples") or export_info.get("raw") or export_info.get("index"):
-                    # Estimate points (int16, 128 bytes per block => 64 points/block)
-                    try:
-                        count = int(export_info.get("count") or 0)
-                    except Exception:
-                        count = 0
-                    pts = count * 64 if count else 4096
-                    self.demo_waveform_var.set(f"OK ({pts} points)")
-                    # keep export path for expert use only
-                    path = export_info.get("samples") or export_info.get("index") or export_info.get("raw") or ""
-                    self.demo_export_var.set(path)
+            demo_set_kpis_from_rx_text(self, rx_text, export_info)
     
         def _demo_render_summary(self, rx_text: str, overall_values: Optional[list] = None) -> None:
-            """Render the Demo 'Overalls' panel.
-    
-            Design goals:
-            - readable (no protobuf dumps)
-            - stable (driven by structured overall_values when available)
-            - raw values (no unit conversions)
-            """
-            if self.demo_summary is None:
-                return
-
-            # Check if rx_text contains the new formatted view
-            if rx_text and ("=== OVERALL MEASUREMENTS ===" in rx_text or "=== SESSION ACCEPTED ===" in rx_text):
-                # Use the new formatted view directly
-                # Remove TYPE and HEX headers
-                lines_raw = rx_text.split('\n')
-                filtered_lines = []
-                skip_next = False
-                for line in lines_raw:
-                    if line.startswith('TYPE:') or line.startswith('HEX:'):
-                        skip_next = True
-                        continue
-                    if skip_next and line.strip() == '':
-                        skip_next = False
-                        continue
-                    filtered_lines.append(line)
-                
-                display_text = '\n'.join(filtered_lines).strip()
-                
-                # Add header with timestamp
-                now_s = time.strftime("%H:%M:%S")
-                header = f"Last update: {now_s}\n\n"
-                
-                self.demo_summary.configure(state=tk.NORMAL)
-                self.demo_summary.delete("1.0", tk.END)
-                
-                # Use monospaced font
-                try:
-                    self.demo_summary.configure(font=("Consolas", 10))
-                except Exception:
-                    pass
-                
-                self.demo_summary.insert(tk.END, header + display_text + "\n")
-                self.demo_summary.configure(state=tk.DISABLED)
-                return
-    
-            # Legacy path: use overall_values
-            items = overall_values or []
-    
-            # Header (use local time for human feedback)
-            now_s = time.strftime("%H:%M:%S")
-            header = f"Last update: {now_s}   •   Metrics: {len(items) if items else 0}\n\n"
-    
-            # Build compact lines: left label column + raw value column
-            lines = []
-            if items:
-                # Stable sorting by label; keep original order for identical labels
-                def _key(it):
-                    try:
-                        return (str(it.get("label", "")).strip().lower(),)
-                    except Exception:
-                        return ("",)
-    
-                for it in sorted(items, key=_key):
-                    try:
-                        lbl = str(it.get("label", "")).strip() or "Value"
-                        val = str(it.get("value", "")).strip() or "•"
-                    except Exception:
-                        lbl, val = "Value", "•"
-                    # Keep it compact: avoid multi-line values in the list view
-                    val = " ".join(val.split())
-                    lines.append(f"{lbl:<28} {val}")
-                    det = str(it.get("details", "") or "").rstrip()
-                    if det:
-                        lines.append(det)
-            else:
-                # Fallback: show only message type if available (kept minimal)
-                msg_type = ""
-                try:
-                    mm = re.search(r"^TYPE:\s*([^\n]+)", (rx_text or "").strip(), flags=re.MULTILINE)
-                    msg_type = mm.group(1).strip() if mm else ""
-                except Exception:
-                    msg_type = ""
-                lines.append("•")
-                if msg_type:
-                    lines.append(f"(last message: {msg_type})")
-    
-            self.demo_summary.configure(state=tk.NORMAL)
-            self.demo_summary.delete("1.0", tk.END)
-    
-            # Use a monospaced feel for alignment if available
-            try:
-                self.demo_summary.configure(font=("Consolas", 10))
-            except Exception:
-                pass
-    
-            self.demo_summary.insert(tk.END, header)
-            self.demo_summary.insert(tk.END, "\n".join(lines) + "\n")
-            self.demo_summary.configure(state=tk.DISABLED)
+            """Render the Demo 'Overalls' panel."""
+            demo_render_summary(self, rx_text, overall_values=overall_values)
     
         def _build_ui_expert(self, parent: tk.Frame) -> None:
-    
-            # Header (same layout as Demo)
-            _card, self.start_button, self.stop_auto_button = self._ui_build_run_header_card(parent)
-            self._update_demo_run_controls()
-    
-            # Filters (keep only the essentials here; other runtime settings live in the Settings tab)
-            filter_box = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            filter_box.pack(fill=tk.X, padx=16, pady=(0, 8))
-            filter_in = tk.Frame(filter_box, bg=self.colors["panel"])
-            filter_in.pack(fill=tk.X, padx=14, pady=10)
-    
-            # Filters title aligned with fields
-            title_row = tk.Frame(filter_in, bg=self.colors["panel"])
-            title_row.pack(fill=tk.X, pady=(0, 6))
-            tk.Label(
-                title_row,
-                text="🔍 Filters",
-                bg=self.colors["panel"],
-                fg=self.colors["text"],
-                font=("Segoe UI", 10, "bold"),
-            ).pack(side=tk.LEFT)
-    
-            form = tk.Frame(filter_in, bg=self.colors["panel"])
-            form.pack(fill=tk.X)
-    
-            # Optional advertising filters (leave empty to disable)
-            self._build_field(form, "Address prefix", self.address_prefix_var)
-            self._build_field(form, "ADV name contains", self.adv_name_contains_var)
-    
-            # Manual Commands with border
-            manual_card = tk.Frame(parent, bg=self.colors["panel"], highlightbackground=self.colors["border"], highlightthickness=1)
-            manual_card.pack(fill=tk.X, padx=16, pady=(0, 12))
-            manual = tk.Frame(manual_card, bg=self.colors["panel"])
-            manual.pack(fill=tk.X, padx=14, pady=10)
-    
-            # Title
-            title_row = tk.Frame(manual, bg=self.colors["panel"])
-            title_row.pack(fill=tk.X, pady=(0, 8))
-            tk.Label(
-                title_row,
-                text="⚡ Manual Commands",
-                bg=self.colors["panel"],
-                fg=self.colors["text"],
-                font=("Segoe UI", 10, "bold"),
-            ).pack(side=tk.LEFT)
-    
-            # Main actions grid
-            manual_btns = tk.Frame(manual, bg=self.colors["panel"])
-            manual_btns.pack(fill=tk.X, pady=(0, 8))
-    
-            buttons = []
-            for text_, action_ in MANUAL_ACTIONS:
-                btn = ttk.Button(manual_btns, text=text_, width=20, command=lambda a=action_: self._start_manual_action(a))
-                buttons.append(btn)
-            self._wrap_buttons(manual_btns, buttons, min_btn_px=180)
-    
-            # Utilities separator
-            sep = tk.Frame(manual, bg=self.colors["border"], height=1)
-            sep.pack(fill=tk.X, pady=(0, 8))
-    
-            # Utilities row
-            util = tk.Frame(manual, bg=self.colors["panel"])
-            util.pack(fill=tk.X)
-    
-            util_btns = [
-                ttk.Button(util, text="Clear logs", width=20, command=self._clear_tiles),
-                ttk.Button(util, text="Plot Latest", width=20, command=self._plot_latest_waveform),
-            ]
-            self._wrap_buttons(util, util_btns, min_btn_px=180)
-    
-            tiles_frame = tk.Frame(parent, bg=self.colors["bg"])
-            tiles_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(12, 16))
-    
-            self.canvas = tk.Canvas(tiles_frame, bg=self.colors["bg"], highlightthickness=0)
-            scrollbar = ttk.Scrollbar(tiles_frame, orient="vertical", command=self.canvas.yview)
-            self.tiles_container = tk.Frame(self.canvas, bg=self.colors["bg"])
-    
-            self.tiles_container.bind(
-                "<Configure>",
-                lambda event: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
-            )
-            self.canvas.create_window((0, 0), window=self.tiles_container, anchor="nw")
-            self.canvas.configure(yscrollcommand=scrollbar.set)
-    
-            self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-    
-            self.canvas.bind_all("<MouseWheel>", self._on_mouse_wheel)
-            self.canvas.bind_all("<Shift-MouseWheel>", self._on_mouse_wheel)
+            build_ui_expert(self, parent)
     
         def _wrap_buttons(self, container: tk.Frame, buttons: list, min_btn_px: int = 140) -> None:
-            """Lay out a list of ttk.Button into a responsive grid that wraps with window width."""
-            state = {"cols": 0}
-    
-            def _relayout(_evt=None) -> None:
-                try:
-                    w = int(container.winfo_width())
-                except Exception:
-                    w = 0
-                cols = max(1, w // max(1, int(min_btn_px)))
-                if cols == state["cols"]:
-                    return
-                state["cols"] = cols
-    
-                for child in container.winfo_children():
-                    child.grid_forget()
-    
-                for i, btn in enumerate(buttons):
-                    r = i // cols
-                    c = i % cols
-                    btn.grid(row=r, column=c, padx=(0, 8), pady=(0, 8), sticky="w")
-    
-                for c in range(cols):
-                    try:
-                        container.grid_columnconfigure(c, weight=1)
-                    except Exception:
-                        pass
-    
-            container.bind("<Configure>", _relayout)
-            # First layout after Tk has computed sizes
-            self.root.after(0, _relayout)
+            """Lay out a list of buttons into a responsive wrapping grid."""
+            wrap_buttons(self, container, buttons, min_btn_px=min_btn_px)
     
         def _build_field(self, parent: tk.Frame, label: str, variable: tk.StringVar, width: int = 16) -> None:
-            parent_bg = parent.cget("bg") if hasattr(parent, "cget") else self.colors["bg"]
-            row = tk.Frame(parent, bg=parent_bg)
-            row.pack(side=tk.LEFT, padx=(0, 12))
-            tk.Label(row, text=label, bg=parent_bg, fg=self.colors["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
-            entry = ttk.Entry(row, textvariable=variable, width=width)
-            entry.pack(anchor="w")
+            build_field(self, parent, label, variable, width=width)
     
         def _on_mouse_wheel(self, event: tk.Event) -> None:
-            if not self.canvas.winfo_exists():
-                return
-            if event.delta == 0:
-                return
-            direction = -1 if event.delta > 0 else 1
-            self.canvas.yview_scroll(direction, "units")
+            on_mouse_wheel(self, event)
     
         def _parse_int_var(self, var: tk.StringVar, default: int) -> int:
             try:
@@ -1634,7 +807,7 @@ def create_app_class(BleCycleWorker, TileState):
             except Exception as e:
                 messagebox.showerror("Waveform plot", f"Unable to plot waveform: {e}")
     
-        def _handle_ui_event(self, event) -> None:
+        def _handle_ui_event(self, event: UiEvent) -> None:
             kind = event[0]
             if kind == "tile_update":
                 _, tile_id, payload = event
@@ -1702,7 +875,7 @@ def create_app_class(BleCycleWorker, TileState):
             self.root.after(UI_POLL_INTERVAL_MS, self._poll_queue)
     
         
-        def _apply_tile_update(self, tile_id: int, payload: Dict[str, str]) -> None:
+        def _apply_tile_update(self, tile_id: int, payload: TileUpdatePayload) -> None:
     
             # Surface structured errors in Demo Debug
             try:

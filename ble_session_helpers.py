@@ -7,30 +7,18 @@ import asyncio
 import time
 import struct
 from typing import Callable, Optional
-import os
-import sys
 
-from protocol_utils import BASE_DIR, PROTOCOL_DIR, CAPTURE_DIR
-if PROTOCOL_DIR not in sys.path:
-    sys.path.insert(0, PROTOCOL_DIR)
-    
-import app_pb2
-import session_pb2
-import measurement_pb2
-import command_pb2
-import common_pb2
-import configuration_pb2
-import fota_pb2
+from protocol_imports import app_pb2, command_pb2, common_pb2, measurement_pb2, session_pb2
+from ui_events import TileUpdatePayload
 
 
 class BleSessionHelpers:
     """
     Encapsulates all BLE session helpers (notify, rx/tx, message building).
-    Eliminates ~400 lines of duplication between _run_manual_action and _run_cycle_impl.
     """
 
     def __init__(self, client, uart_rx_uuid: str, uart_tx_uuid: str, 
-                 recorder=None, ui_callback: Optional[Callable] = None):
+                 recorder=None, ui_callback: Optional[Callable[[TileUpdatePayload], None]] = None):
         """
         Args:
             client: BleakClient instance
@@ -105,13 +93,13 @@ class BleSessionHelpers:
             await asyncio.wait_for(self.rx_event.wait(), timeout=remaining)
 
     def _alloc_seq(self) -> int:
-        """Allocate next message sequence number (message_id in new protocol)."""
+        """Allocate next message sequence number ."""
         v = self.next_seq_no
         self.next_seq_no += 1
         return v
 
     def _mk_header(self, total_fragments: int = 1, current_fragment: int = 1) -> common_pb2.Header:
-        """Create standard header for new protocol."""
+        """Create standard header"""
         return common_pb2.Header(
             version=1,
             message_id=self._alloc_seq(),
@@ -171,7 +159,7 @@ class BleSessionHelpers:
         msg_type = msg.WhichOneof("payload") or "(none)"
         return payload, msg, msg_type
 
-    # --- Protocol-specific message senders (new protocol) ---
+    # --- Protocol-specific message senders ---
 
     async def send_open_session(self) -> None:
         """Send OpenSession message to start a session with the sensor."""

@@ -5,21 +5,10 @@ Creates per-session log folder with:
 - events.txt: human-readable decoded protobuf messages with useful fields
 """
 import os
-import sys
 import time
 
-# Add protocol to path for protobuf imports
-BASE_DIR = os.path.dirname(__file__)
-PROTOCOL_DIR = os.path.join(BASE_DIR, "protocol")
-if PROTOCOL_DIR not in sys.path:
-    sys.path.insert(0, PROTOCOL_DIR)
-
 try:
-    import app_pb2
-    import session_pb2
-    import measurement_pb2
-    import command_pb2
-    import common_pb2
+    from protocol_imports import app_pb2
     from google.protobuf import text_format
     PROTOBUF_AVAILABLE = True
 except Exception:

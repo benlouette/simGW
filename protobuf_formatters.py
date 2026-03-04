@@ -1,25 +1,13 @@
 """
 Protobuf Formatters - Centralized protobuf parsing and formatting
-Updated for new simplified SKF protocol
 """
 
 import re
 import struct
 from typing import Optional, Dict, List
 from google.protobuf import text_format
-import os
-import sys
 
-BASE_DIR = os.path.dirname(__file__)
-PROTOCOL_DIR = os.path.join(BASE_DIR, "protocol")
-if PROTOCOL_DIR not in sys.path:
-    sys.path.insert(0, PROTOCOL_DIR)
-
-import app_pb2
-import session_pb2
-import measurement_pb2
-import command_pb2
-import common_pb2
+from protocol_imports import app_pb2
 
 
 class ProtobufFormatter:

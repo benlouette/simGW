@@ -1,48 +1,30 @@
 ﻿import asyncio
-import os
-import re
-import sys
 import threading
 import time
 from dataclasses import dataclass
 from queue import Queue
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
-from bleak import BleakClient, BleakScanner
+from bleak import BleakClient
 
 # Refactored: centralized modules
 from ble_session_helpers import BleSessionHelpers
-from ble_filters import adv_matches as ble_adv_matches
+from ble_worker_services import (
+    normalize_ble_filters,
+    create_session_recorder,
+    scan_for_matching_device,
+)
+from ble_waveform_service import collect_waveform_export
 from protobuf_formatters import ProtobufFormatter, OverallValuesExtractor
 from display_formatters import format_session_and_overall_text, format_rx_summary
-from data_exporters import WaveformExporter, WaveformParser
-from session_recorder import SessionRecorder
+from data_exporters import WaveformExporter
 from protocol_utils import (
-    BASE_DIR, PROTOCOL_DIR, CAPTURE_DIR,
-    AUTO_RESTART_DELAY_MS, phase_rank,
-    PHASE_SCANNING, PHASE_CONNECTING, PHASE_CONNECTED, PHASE_METRICS, 
-    PHASE_WAVEFORM, PHASE_CLOSE_SESSION, PHASE_DISCONNECTED, PHASE_ERROR,
+    CAPTURE_DIR,
+    phase_rank,
     _PHASE_ORDER
 )
-from ui_config import (
-    UI_POLL_INTERVAL_MS, MANUAL_ACTIONS, CHECKLIST_ITEMS, CHECKLIST_STATE_MAP
-)
-from ble_config import (
-    UART_SERVICE_BYTES, UART_RX_BYTES, UART_TX_BYTES,
-    uuid_from_bytes, get_uart_uuids
-)
-
-# Add PROTOCOL_DIR to sys.path for protobuf imports
-if PROTOCOL_DIR not in sys.path:
-    sys.path.insert(0, PROTOCOL_DIR)
-
-import app_pb2
-import session_pb2
-import measurement_pb2
-import command_pb2
-import common_pb2
-import configuration_pb2
-import fota_pb2
+from ble_config import get_uart_uuids
+from ui_events import TileUpdatePayload, UiEvent, make_cycle_done, make_tile_update
 
 
 @dataclass
@@ -60,7 +42,7 @@ class TileState:
 
 
 class BleCycleWorker:
-    def __init__(self, ui_queue: Queue):
+    def __init__(self, ui_queue: Queue[UiEvent]):
         self.ui_queue = ui_queue
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
@@ -111,7 +93,7 @@ class BleCycleWorker:
         with self._cancel_lock:
             return self._cancel_all or (int(tile_id) in self._cancel_tiles)
 
-    def _emit(self, tile_id: int, payload: dict) -> None:
+    def _emit(self, tile_id: int, payload: TileUpdatePayload) -> None:
                 """Centralized UI emitter for tile updates.
                 Adds ts_ms automatically. Never raises.
                 Also enforces a monotonic 'phase' progression per tile (best-effort).
@@ -131,15 +113,15 @@ class BleCycleWorker:
                             else:
                                 self._tile_phase_rank[tile_id] = pr
 
-                    self.ui_queue.put(("tile_update", tile_id, out))
+                    self.ui_queue.put(make_tile_update(tile_id, out))
                 except Exception:
                     # Never crash worker on UI update failure
                     pass
 
-    def _create_ui_callback(self, tile_id: int):
+    def _create_ui_callback(self, tile_id: int) -> Callable[[TileUpdatePayload], None]:
         """Create a UI callback function for BLE helpers to avoid duplication."""
-        def ui_callback(update_dict):
-            self.ui_queue.put(("tile_update", tile_id, update_dict))
+        def ui_callback(update_dict: TileUpdatePayload) -> None:
+            self.ui_queue.put(make_tile_update(tile_id, update_dict))
         return ui_callback
 
     async def _run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
@@ -181,63 +163,41 @@ class BleCycleWorker:
         REFACTORED: Execute manual BLE action using centralized BleSessionHelpers.
         Reduced from ~400 lines to ~150 lines.
         """
-        address_prefix = address_prefix.upper()
-        name_contains = (name_contains or "").strip()
-        service_uuid_contains = (service_uuid_contains or "").strip()
-        mfg_id_hex = (mfg_id_hex or "").strip()
-        mfg_data_hex_contains = (mfg_data_hex_contains or "").strip()
+        address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains = normalize_ble_filters(
+            address_prefix,
+            name_contains,
+            service_uuid_contains,
+            mfg_id_hex,
+            mfg_data_hex_contains,
+        )
         
         # Setup session recorder
-        recorder = None
-        session_dir = None
-        if record_sessions:
-            ts = time.strftime("%Y%m%d_%H%M%S")
-            session_name = f"sensor{tile_id}_{ts}_{action}"
-            recorder = SessionRecorder(session_root, session_name)
-            session_dir = recorder.session_dir
-            self.ui_queue.put(("tile_update", tile_id, {"session_dir": session_dir}))
-            recorder.log_text(f"manual_start:{action}")
+        recorder, session_dir = create_session_recorder(
+            tile_id=tile_id,
+            action=action,
+            record_sessions=record_sessions,
+            session_root=session_root,
+            ui_queue=self.ui_queue,
+        )
         
         self._emit(tile_id, {"status": f"Manual: {action} / scanning...", "phase": "scanning"})
         self._emit(tile_id, {"checklist": {"waiting_connection": "in_progress"}})
         
         # Scan for device
-        matched_device = {"value": None}
-        found_event = asyncio.Event()
+        matched, was_cancelled = await scan_for_matching_device(
+            address_prefix=address_prefix,
+            name_contains=name_contains,
+            service_uuid_contains=service_uuid_contains,
+            mfg_id_hex=mfg_id_hex,
+            mfg_data_hex_contains=mfg_data_hex_contains,
+            scan_timeout=scan_timeout,
+            is_cancelled=lambda: self._is_cancelled(tile_id),
+        )
 
-        def _on_device_found(device, advertisement_data):
-            if not getattr(device, "address", None):
-                return
-            if self._is_cancelled(tile_id):
-                return
-            if ble_adv_matches(device, advertisement_data, address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains):
-                if not found_event.is_set():
-                    matched_device["value"] = device
-                    found_event.set()
-
-        scanner = BleakScanner(_on_device_found)
-        await scanner.start()
-        try:
-            start_t = asyncio.get_running_loop().time()
-            while True:
-                if self._is_cancelled(tile_id):
-                    self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (scan)", "checklist": {"waiting_connection": "pending"}})
-                    return
-                remaining = float(scan_timeout) - (asyncio.get_running_loop().time() - start_t)
-                if remaining <= 0:
-                    raise asyncio.TimeoutError()
-                try:
-                    await asyncio.wait_for(found_event.wait(), timeout=min(0.25, remaining))
-                    break
-                except asyncio.TimeoutError:
-                    continue
-        except asyncio.TimeoutError:
-            self._emit(tile_id, {"status": "Not found", "address": "•"})
+        if was_cancelled:
+            self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (scan)", "checklist": {"waiting_connection": "pending"}})
             return
-        finally:
-            await scanner.stop()
 
-        matched = matched_device["value"]
         if not matched:
             self._emit(tile_id, {"status": "Not found", "address": "•"})
             if recorder is not None:
@@ -297,7 +257,7 @@ class BleCycleWorker:
                     raise
 
             if action == "connect_test":
-                self.ui_queue.put(("tile_update", tile_id, {"status": "Connected (test OK)"}))
+                self.ui_queue.put(make_tile_update(tile_id, {"status": "Connected (test OK)"}))
 
             elif action == "overall":
                 # Session already open, directly request metrics
@@ -310,7 +270,7 @@ class BleCycleWorker:
                         status += f" ({len(list(msg.send_measurement.measurement_data))} measurements)"
                     except Exception:
                         pass
-                self.ui_queue.put(("tile_update", tile_id, {
+                self.ui_queue.put(make_tile_update(tile_id, {
                     "status": status,
                     "checklist": {"general_info_exchange": "done", "data_collection": "done"},
                     "rx_text": format_rx_summary(msg_type, payload, ProtobufFormatter.format_payload_readable(payload)),
@@ -321,7 +281,7 @@ class BleCycleWorker:
                 session_info = {"accept_msg": accept_session_msg, "payload": accept_session_payload}
                 rx_text = format_session_and_overall_text(session_info, [])
                 await helpers.send_close_session()
-                self.ui_queue.put(("tile_update", tile_id, {
+                self.ui_queue.put(make_tile_update(tile_id, {
                     "status": "Session test OK",
                     "checklist": {"general_info_exchange": "done", "close_session": "done"},
                     "rx_text": rx_text,
@@ -389,7 +349,7 @@ class BleCycleWorker:
                 # Close session
                 await helpers.send_close_session()
                 
-                self.ui_queue.put(("tile_update", tile_id, {
+                self.ui_queue.put(make_tile_update(tile_id, {
                     "status": status_text,
                     "checklist": {"general_info_exchange": "done", "data_collection": "done", "close_session": "done"},
                     "rx_text": rx_text,
@@ -464,7 +424,7 @@ class BleCycleWorker:
                         if export_info.get('samples'):
                             rx_text += f"- samples: {export_info['samples']}"
                 
-                self.ui_queue.put(("tile_update", tile_id, {
+                self.ui_queue.put(make_tile_update(tile_id, {
                     "status": f"Full cycle done (overall + waveform {received}/{expected or '?'})",
                     "checklist": {"general_info_exchange": "done", "data_collection": "done", "close_session": "done"},
                     "rx_text": rx_text,
@@ -492,144 +452,16 @@ class BleCycleWorker:
                 recorder.close()
             self._emit(tile_id, {"checklist": {"disconnect": "done"}})
             self._emit(tile_id, {"status": "Disconnected", "phase": "disconnected"})
-            self.ui_queue.put(("cycle_done", tile_id))
+            self.ui_queue.put(make_cycle_done(tile_id))
     async def _collect_waveform_export(self, tile_id: int, _recv_app, rx_timeout: float) -> dict:
-        """
-        Receive waveform data_upload blocks until total_block is reached (if provided),
-        export them to capture files, and return a structured result dict:
-            {
-              'ok': bool,
-              'received': int,
-              'expected': int|None,
-              'export_info': dict|None,
-              'last_payload': bytes,
-              'last_type': str,
-              'last_rx_text': str,
-              'error_info': dict|None
-            }
-        """
-        received = 0
-        expected = None
-        last_payload = b""
-        last_type = "(none)"
-        wave_payloads = []
-        wave_msgs = []
-
-        wave_rx_timeout = max(float(rx_timeout), 10.0)
-
-        try:
-            while True:
-                if self._is_cancelled(tile_id):
-                    self._emit(tile_id, {"phase": "disconnected", "status": "Cancelled (waveform)"})
-                    return {
-                        "ok": False,
-                        "received": received,
-                        "expected": expected,
-                        "export_info": None,
-                        "last_payload": last_payload,
-                        "last_type": last_type,
-                        "last_rx_text": "",
-                        "error_info": {"where": "waveform", "type": "Cancelled", "msg": "cancel requested"},
-                    }
-
-                try:
-                    data_payload, data_message, data_type = await _recv_app(wave_rx_timeout)
-                except asyncio.TimeoutError as exc:
-                    return {
-                        "ok": False,
-                        "received": received,
-                        "expected": expected,
-                        "export_info": None,
-                        "last_payload": last_payload,
-                        "last_type": last_type,
-                        "last_rx_text": "",
-                        "error_info": {"where": "waveform_recv_timeout", "type": type(exc).__name__, "msg": str(exc)},
-                    }
-
-                last_payload, last_type = data_payload, data_type
-
-                if data_type != "send_measurement":
-                    rx_text = format_rx_summary(
-                        ProtobufFormatter.get_message_type(data_payload),
-                        data_payload,
-                        ProtobufFormatter.format_payload_readable(data_payload)
-                    )
-                    return {
-                        "ok": False,
-                        "received": received,
-                        "expected": expected,
-                        "export_info": None,
-                        "last_payload": last_payload,
-                        "last_type": last_type,
-                        "last_rx_text": rx_text,
-                        "error_info": {"where": "waveform_unexpected_type", "type": "UnexpectedType", "msg": str(data_type)},
-                    }
-
-                wave_payloads.append(data_payload)
-                wave_msgs.append(data_message)
-                received += 1
-
-                if expected is None:
-                    try:
-                        expected = int(data_message.header.total_fragments)
-                        if expected <= 0:
-                            expected = None
-                    except Exception:
-                        expected = None
-
-                rx_text = format_rx_summary(
-                    ProtobufFormatter.get_message_type(data_payload),
-                    data_payload,
-                    ProtobufFormatter.format_payload_readable(data_payload)
-                )
-
-                self._emit(tile_id, {
-                    "phase": "waveform",
-                    "status": f"Waveform blocks {received}/{expected or '?'}",
-                    "checklist": {"data_collection": "in_progress"},
-                    "rx_text": rx_text,
-                })
-
-                if expected is not None and received >= expected:
-                    break
-
-            export_info = None
-            if wave_payloads:
-                try:
-                    export_info = self._export_waveform_capture(tile_id, wave_payloads, wave_msgs)
-                except Exception as export_exc:
-                    return {
-                        "ok": False,
-                        "received": received,
-                        "expected": expected,
-                        "export_info": None,
-                        "last_payload": last_payload,
-                        "last_type": last_type,
-                        "last_rx_text": rx_text,
-                        "error_info": {"where": "waveform_export", "type": type(export_exc).__name__, "msg": str(export_exc)},
-                    }
-
-            return {
-                "ok": True,
-                "received": received,
-                "expected": expected,
-                "export_info": export_info,
-                "last_payload": last_payload,
-                "last_type": last_type,
-                "last_rx_text": rx_text,
-                "error_info": None,
-            }
-        except Exception as exc:
-            return {
-                "ok": False,
-                "received": received,
-                "expected": expected,
-                "export_info": None,
-                "last_payload": last_payload,
-                "last_type": last_type,
-                "last_rx_text": "",
-                "error_info": {"where": "waveform_collect", "type": type(exc).__name__, "msg": str(exc)},
-            }
+        return await collect_waveform_export(
+            tile_id=tile_id,
+            recv_app=_recv_app,
+            rx_timeout=rx_timeout,
+            is_cancelled=lambda: self._is_cancelled(tile_id),
+            emit=lambda payload: self._emit(tile_id, payload),
+            export_waveform_capture=self._export_waveform_capture,
+        )
 
 
     async def _run_cycle_impl(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
@@ -638,50 +470,37 @@ class BleCycleWorker:
         REFACTORED: Full auto cycle using centralized BleSessionHelpers.
         Reduced from ~350 lines to ~180 lines.
         """
-        address_prefix = address_prefix.upper()
-        name_contains = (name_contains or "").strip()
-        service_uuid_contains = (service_uuid_contains or "").strip()
-        mfg_id_hex = (mfg_id_hex or "").strip()
-        mfg_data_hex_contains = (mfg_data_hex_contains or "").strip()
+        address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains = normalize_ble_filters(
+            address_prefix,
+            name_contains,
+            service_uuid_contains,
+            mfg_id_hex,
+            mfg_data_hex_contains,
+        )
         
         # Setup session recorder
-        recorder = None
-        session_dir = None
-        if record_sessions:
-            ts = time.strftime("%Y%m%d_%H%M%S")
-            session_name = f"sensor{tile_id}_{ts}_auto"
-            recorder = SessionRecorder(session_root, session_name)
-            session_dir = recorder.session_dir
-            self.ui_queue.put(("tile_update", tile_id, {"session_dir": session_dir}))
-            recorder.log_text("cycle_start")
+        recorder, session_dir = create_session_recorder(
+            tile_id=tile_id,
+            action=None,
+            record_sessions=record_sessions,
+            session_root=session_root,
+            ui_queue=self.ui_queue,
+        )
         
         self._emit(tile_id, {"status": "Scanning...", "phase": "scanning"})
         self._emit(tile_id, {"checklist": {"waiting_connection": "in_progress"}})
         
         # Scan for device
-        matched_device = {"value": None}
-        found_event = asyncio.Event()
+        matched, _was_cancelled = await scan_for_matching_device(
+            address_prefix=address_prefix,
+            name_contains=name_contains,
+            service_uuid_contains=service_uuid_contains,
+            mfg_id_hex=mfg_id_hex,
+            mfg_data_hex_contains=mfg_data_hex_contains,
+            scan_timeout=scan_timeout,
+            is_cancelled=None,
+        )
 
-        def _on_device_found(device, advertisement_data):
-            if not getattr(device, "address", None):
-                return
-            if ble_adv_matches(device, advertisement_data, address_prefix, name_contains, service_uuid_contains, mfg_id_hex, mfg_data_hex_contains):
-                if not found_event.is_set():
-                    matched_device["value"] = device
-                    found_event.set()
-
-        scanner = BleakScanner(_on_device_found)
-        await scanner.start()
-        try:
-            try:
-                await asyncio.wait_for(found_event.wait(), timeout=scan_timeout)
-            except asyncio.TimeoutError:
-                self._emit(tile_id, {"status": "Not found", "address": "•"})
-                return
-        finally:
-            await scanner.stop()
-
-        matched = matched_device["value"]
         if not matched:
             self._emit(tile_id, {"status": "Not found", "address": "•"})
             if recorder is not None:
@@ -712,12 +531,12 @@ class BleCycleWorker:
             if mtu and hasattr(client, "request_mtu"):
                 try:
                     await client.request_mtu(mtu)
-                    self.ui_queue.put(("tile_update", tile_id, {"status": f"MTU requested: {mtu}"}))
+                    self.ui_queue.put(make_tile_update(tile_id, {"status": f"MTU requested: {mtu}"}))
                 except Exception as exc:
-                    self.ui_queue.put(("tile_update", tile_id, {"status": f"MTU request failed: {exc}"}))
+                    self.ui_queue.put(make_tile_update(tile_id, {"status": f"MTU request failed: {exc}"}))
 
             await helpers.start_notifications()
-            self.ui_queue.put(("tile_update", tile_id, {"status": "Opening session...", "checklist": {"general_info_exchange": "in_progress"}}))
+            self.ui_queue.put(make_tile_update(tile_id, {"status": "Opening session...", "checklist": {"general_info_exchange": "in_progress"}}))
 
             # REFACTORED: New protocol - send OpenSession once
             await helpers.send_open_session()
@@ -726,7 +545,7 @@ class BleCycleWorker:
             try:
                 payload, app_message, message_type = await helpers.recv_app(rx_timeout)
             except asyncio.TimeoutError:
-                self.ui_queue.put(("tile_update", tile_id, {"status": "AcceptSession timeout"}))
+                self.ui_queue.put(make_tile_update(tile_id, {"status": "AcceptSession timeout"}))
             else:
                 latest_status = "Received"
                 error_info = None
@@ -742,7 +561,7 @@ class BleCycleWorker:
                         config_hash = getattr(accept_msg, "config_hash", 0)
                         battery = getattr(accept_msg, "battery_indicator", 0)
                         latest_status = f"Session accepted (FW: 0x{fw_version:X}, Battery: {battery}%)"
-                        self.ui_queue.put(("tile_update", tile_id, {"status": latest_status}))
+                        self.ui_queue.put(make_tile_update(tile_id, {"status": latest_status}))
                         
                         # Store session info for final display
                         session_info = {
@@ -765,7 +584,7 @@ class BleCycleWorker:
                             last_loop_index = loop_index
                             latest_status = "Session accepted"
                             if loop_index == 0:
-                                self.ui_queue.put(("tile_update", tile_id, {"checklist": {"general_info_exchange": "done", "data_collection": "in_progress"}}))
+                                self.ui_queue.put(make_tile_update(tile_id, {"checklist": {"general_info_exchange": "done", "data_collection": "in_progress"}}))
 
                             current_time_ms = int(time.time() * 1000)
                             
@@ -777,7 +596,7 @@ class BleCycleWorker:
                             except asyncio.TimeoutError:
                                 latest_status = "Measurement timeout"
                                 data_collection_complete = False
-                                self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "pending"}}))
+                                self.ui_queue.put(make_tile_update(tile_id, {"checklist": {"data_collection": "pending"}}))
                                 break
                             else:
                                 try:
@@ -802,14 +621,14 @@ class BleCycleWorker:
                                     latest_status = "Measurement data parse error"
                                     error_info = {"where": f"metrics_send_measurement_parse(loop_index={loop_index})", "type": type(exc).__name__, "msg": str(exc)}
                                     data_collection_complete = False
-                                    self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "pending"}}))
+                                    self.ui_queue.put(make_tile_update(tile_id, {"checklist": {"data_collection": "pending"}}))
                                     break
 
                         if data_collection_complete and last_loop_index == 5 and latest_status == "Measurement data received":
-                            self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "done"}}))
+                            self.ui_queue.put(make_tile_update(tile_id, {"checklist": {"data_collection": "done"}}))
                         else:
                             data_collection_complete = False
-                            self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "pending"}}))
+                            self.ui_queue.put(make_tile_update(tile_id, {"checklist": {"data_collection": "pending"}}))
 
                         if data_collection_complete:
                             current_time_ms = int(time.time() * 1000)
@@ -845,7 +664,7 @@ class BleCycleWorker:
                                 err = wf_res.get('error_info') if isinstance(wf_res, dict) else None
                                 if err:
                                     self._emit(tile_id, {"phase": "waveform", "status": f"Waveform error: {err.get('where','?')} {err.get('type','')} {err.get('msg','')}", "error_info": err})
-                                self.ui_queue.put(("tile_update", tile_id, {"checklist": {"data_collection": "pending"}}))
+                                self.ui_queue.put(make_tile_update(tile_id, {"checklist": {"data_collection": "pending"}}))
                     else:
                         latest_status = f"Unexpected reply: {message_type}"
                 except Exception as exc:
@@ -858,7 +677,7 @@ class BleCycleWorker:
                     if formatted_rx_text:
                         latest_rx_text = formatted_rx_text
                 
-                self.ui_queue.put(("tile_update", tile_id, {"status": latest_status, "rx_text": latest_rx_text, "export_info": export_info, "overall_values": overall_values, "error": error_info}))
+                self.ui_queue.put(make_tile_update(tile_id, {"status": latest_status, "rx_text": latest_rx_text, "export_info": export_info, "overall_values": overall_values, "error": error_info}))
 
             await helpers.stop_notifications()
             
@@ -878,7 +697,7 @@ class BleCycleWorker:
                 recorder.close()
             self._emit(tile_id, {"checklist": {"disconnect": "done"}})
             self._emit(tile_id, {"status": "Disconnected", "phase": "disconnected"})
-            self.ui_queue.put(("cycle_done", tile_id))
+            self.ui_queue.put(make_cycle_done(tile_id))
 
 
 # Import UI application class (extracted for maintainability)

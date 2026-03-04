@@ -136,14 +136,8 @@ class WaveformParser:
         Returns:
             tuple: (samples: List[int], metadata: dict)
         """
-        import sys
-        protocol_dir = os.path.join(os.path.dirname(__file__), "protocol")
-        if protocol_dir not in sys.path:
-            sys.path.insert(0, protocol_dir)
-        
         try:
-            import app_pb2
-            import measurement_pb2
+            from protocol_imports import app_pb2
         except ImportError as e:
             raise RuntimeError(f"Cannot import protocol modules: {e}")
         
