@@ -40,14 +40,18 @@ except Exception:
     Figure = None
     FigureCanvasTkAgg = None
 
-from config import (
-    AUTO_RESTART_DELAY_MS, UI_POLL_INTERVAL_MS, CHECKLIST_ITEMS, 
-    CHECKLIST_STATE_MAP, MANUAL_ACTIONS, UI_COLORS,
+from protocol_utils import AUTO_RESTART_DELAY_MS
+from ui_config import (
+    UI_POLL_INTERVAL_MS, CHECKLIST_ITEMS, CHECKLIST_STATE_MAP, 
+    MANUAL_ACTIONS, UI_COLORS
+)
+from ble_config import (
     MEASUREMENT_TYPE_ACCELERATION_TWF, MEASUREMENT_TYPE_VELOCITY_TWF, 
     MEASUREMENT_TYPE_ENVELOPER3_TWF
 )
 from ble_filters import adv_matches as ble_adv_matches, format_adv_details as ble_format_adv_details
 from data_exporters import WaveformParser
+from ui_helpers import apply_windows_dark_mode, apply_dark_theme
 WaveformExportTools = WaveformParser
 
 
@@ -129,148 +133,15 @@ def create_app_class(BleCycleWorker, TileState):
             self.mtu_var = tk.StringVar(value="247")
             self.twf_type_var = tk.StringVar(value="5")  # Default: Acceleration TWF
 
-            self._apply_theme()
+            # Apply dark theme and Windows customization
+            self.colors = UI_COLORS
+            apply_dark_theme(self.root, self.colors)
             self._build_ui()
             self._poll_queue()
             
             # Apply Windows customization after window is fully rendered
-            self.root.after(100, self._apply_windows_customization)
+            self.root.after(100, lambda: apply_windows_dark_mode(self.root))
     
-        def _apply_windows_customization(self) -> None:
-            """Apply Windows-specific window customization (dark mode, borders, etc.)."""
-            try:
-                import ctypes
-                
-                # Force window update to ensure it's rendered
-                self.root.update_idletasks()
-                
-                # Get window handle - try both methods
-                try:
-                    hwnd = int(self.root.wm_frame(), 16)  # Try frame method first (more reliable)
-                except Exception:
-                    hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
-                
-                # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 10 1809+)
-                # Enable dark title bar
-                ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, 20, 
-                    ctypes.byref(ctypes.c_int(1)), 
-                    ctypes.sizeof(ctypes.c_int)
-                )
-                
-                # Windows 11 22000+ specific enhancements
-                try:
-                    # DWMWA_CAPTION_COLOR = 35 - Set title bar color
-                    # Convert hex color to COLORREF (0x00BBGGRR)
-                    title_color = 0x00211a17  # Dark gray-blue matching panel
-                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                        hwnd, 35,
-                        ctypes.byref(ctypes.c_int(title_color)),
-                        ctypes.sizeof(ctypes.c_int)
-                    )
-                    
-                    # DWMWA_BORDER_COLOR = 34 - Set border color
-                    border_color = 0x003a2f2a  # Subtle dark border
-                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                        hwnd, 34,
-                        ctypes.byref(ctypes.c_int(border_color)),
-                        ctypes.sizeof(ctypes.c_int)
-                    )
-                    
-                    # DWMWA_WINDOW_CORNER_PREFERENCE = 33
-                    # DWMWCP_ROUND = 2 (rounded corners)
-                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                        hwnd, 33,
-                        ctypes.byref(ctypes.c_int(2)),
-                        ctypes.sizeof(ctypes.c_int)
-                    )
-                except Exception:
-                    pass  # Windows 11 APIs not available (Windows 10)
-                    
-            except Exception:
-                pass  # Not on Windows or API not available
-
-    
-        def _apply_theme(self) -> None:
-            # Use centralized color palette from config
-            self.colors = UI_COLORS
-    
-            style = ttk.Style(self.root)
-            style.theme_use("clam")
-            style.configure("TFrame", background=self.colors["bg"])
-            style.configure("TLabel", background=self.colors["bg"], foreground=self.colors["text"], font=("Segoe UI", 10))
-            style.configure("Header.TLabel", background=self.colors["panel"], foreground=self.colors["text"], font=("Segoe UI", 14, "bold"))
-            style.configure("Subtle.TLabel", background=self.colors["bg"], foreground=self.colors["muted"])
-            style.configure("TEntry", fieldbackground=self.colors["panel_alt"], foreground=self.colors["text"], insertcolor=self.colors["text"])
-            style.configure("TButton", background=self.colors["panel"], foreground=self.colors["text"], padding=(10, 6))
-            style.configure("Accent.TButton", background=self.colors["accent"], foreground="#0b0f14", padding=(10, 6))
-            style.map("Accent.TButton", background=[("active", self.colors["accent_alt"])])
-            
-            # Combobox dark theme
-            style.configure("TCombobox", 
-                fieldbackground=self.colors["panel_alt"],
-                background=self.colors["panel"],
-                foreground=self.colors["text"],
-                arrowcolor=self.colors["text"],
-                borderwidth=0)
-            style.map("TCombobox",
-                fieldbackground=[("readonly", self.colors["panel_alt"])],
-                selectbackground=[("readonly", self.colors["accent"])],
-                selectforeground=[("readonly", self.colors["text"])])
-            
-            # Scrollbar dark theme
-            style.configure("Vertical.TScrollbar",
-                background=self.colors["panel"],
-                troughcolor=self.colors["bg"],
-                borderwidth=0,
-                arrowcolor=self.colors["text"])
-            style.map("Vertical.TScrollbar",
-                background=[("active", self.colors["panel_alt"])])
-
-            # Configure popup listbox colors for Combobox
-            self.root.option_add("*TCombobox*Listbox*Background", self.colors["panel"])
-            self.root.option_add("*TCombobox*Listbox*Foreground", self.colors["text"])
-            self.root.option_add("*TCombobox*Listbox*selectBackground", self.colors["accent"])
-            self.root.option_add("*TCombobox*Listbox*selectForeground", self.colors["text"])
-
-
-
-            # Notebook (tabs) styling - modern dark theme with equal width tabs
-            style.configure("TNotebook", 
-                background=self.colors["bg"],
-                borderwidth=0,
-                tabmargins=0)
-            
-            style.configure("TNotebook.Tab",
-                background=self.colors["panel_alt"],
-                foreground=self.colors["muted"],
-                padding=(50, 12),
-                borderwidth=0,
-                focuscolor="none",
-                font=("Segoe UI", 10, "bold"))
-            
-            style.map("TNotebook.Tab",
-                background=[("selected", self.colors["panel"]), ("active", self.colors["panel_alt"])],
-                foreground=[("selected", self.colors["accent"]), ("active", self.colors["text"])],
-                padding=[("selected", (50, 12))])  # Expand selected tab slightly
-
-            # Treeview dark theme
-            style.configure("Treeview",
-                           background=self.colors["panel"],
-                           foreground=self.colors["text"],
-                           fieldbackground=self.colors["panel"],
-                           borderwidth=0)
-            style.configure("Treeview.Heading",
-                           background=self.colors["panel_alt"],
-                           foreground=self.colors["text"],
-                           borderwidth=1,
-                           relief="flat")
-            style.map("Treeview",
-                     background=[("selected", self.colors["accent"])],
-                     foreground=[("selected", "#ffffff")])
-            style.map("Treeview.Heading",
-                     background=[("active", self.colors["border"])])
-
         def _log(self, level: str, msg: str) -> None:
             """Append a timestamped line to the Demo debug console (if present)."""
             try:

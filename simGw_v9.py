@@ -17,14 +17,19 @@ from protobuf_formatters import ProtobufFormatter, OverallValuesExtractor
 from display_formatters import format_session_and_overall_text, format_rx_summary
 from data_exporters import WaveformExporter, WaveformParser
 from session_recorder import SessionRecorder
-from config import (
+from protocol_utils import (
     BASE_DIR, PROTOCOL_DIR, CAPTURE_DIR,
-    UART_SERVICE_BYTES, UART_RX_BYTES, UART_TX_BYTES,
-    AUTO_RESTART_DELAY_MS, UI_POLL_INTERVAL_MS,
+    AUTO_RESTART_DELAY_MS, phase_rank,
     PHASE_SCANNING, PHASE_CONNECTING, PHASE_CONNECTED, PHASE_METRICS, 
     PHASE_WAVEFORM, PHASE_CLOSE_SESSION, PHASE_DISCONNECTED, PHASE_ERROR,
-    _phase_rank, MANUAL_ACTIONS, CHECKLIST_ITEMS, CHECKLIST_STATE_MAP,
-    _uuid_from_bytes, _get_uart_uuids, _PHASE_ORDER
+    _PHASE_ORDER
+)
+from ui_config import (
+    UI_POLL_INTERVAL_MS, MANUAL_ACTIONS, CHECKLIST_ITEMS, CHECKLIST_STATE_MAP
+)
+from ble_config import (
+    UART_SERVICE_BYTES, UART_RX_BYTES, UART_TX_BYTES,
+    uuid_from_bytes, get_uart_uuids
 )
 
 # Add PROTOCOL_DIR to sys.path for protobuf imports
@@ -59,7 +64,7 @@ class BleCycleWorker:
         self.ui_queue = ui_queue
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
-        self.uart_service_uuid, self.uart_rx_uuid, self.uart_tx_uuid = _get_uart_uuids(True)
+        self.uart_service_uuid, self.uart_rx_uuid, self.uart_tx_uuid = get_uart_uuids(True)
         self._tile_phase_rank = {}  # tile_id -> last phase rank
         # Hard-stop support (cancellation)
         self._cancel_lock = threading.Lock()
@@ -117,7 +122,7 @@ class BleCycleWorker:
 
                     # Keep phase monotonic per tile to avoid confusing UI regressions.
                     if "phase" in out and out["phase"]:
-                        pr = _phase_rank(str(out["phase"]))
+                        pr = phase_rank(str(out["phase"]))
                         prev = self._tile_phase_rank.get(tile_id, -1)
                         if pr >= 0:
                             if prev >= 0 and pr < prev:
@@ -280,7 +285,7 @@ class BleCycleWorker:
                     if msg_type == "accept_session":
                         self._emit(tile_id, {
                             "status": f"Session accepted (FW: 0x{msg.accept_session.fw_version:X})",
-                            "rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
+                            "rx_text": format_rx_summary(msg_type, payload, ProtobufFormatter.format_payload_readable(payload)),
                         })
                         # Save session info for actions that need it
                         accept_session_msg = msg.accept_session
@@ -308,7 +313,7 @@ class BleCycleWorker:
                 self.ui_queue.put(("tile_update", tile_id, {
                     "status": status,
                     "checklist": {"general_info_exchange": "done", "data_collection": "done"},
-                    "rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
+                    "rx_text": format_rx_summary(msg_type, payload, ProtobufFormatter.format_payload_readable(payload)),
                 }))
 
             elif action == "session_test":
@@ -352,7 +357,7 @@ class BleCycleWorker:
                         "phase": "waveform",
                         "status": f"Waveform blocks {received}/{expected or '?'}",
                         "checklist": {"general_info_exchange": "done", "data_collection": "in_progress"},
-                        "rx_text": f"TYPE: {msg_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload),
+                        "rx_text": format_rx_summary(msg_type, payload, ProtobufFormatter.format_payload_readable(payload)),
                     })
                     if expected and received >= expected:
                         break
@@ -544,10 +549,10 @@ class BleCycleWorker:
                 last_payload, last_type = data_payload, data_type
 
                 if data_type != "send_measurement":
-                    rx_text = (
-                        f"TYPE: {self._pb_message_type(data_payload)}\n"
-                        f"HEX: {self._hex_short(data_payload)}\n\n"
-                        + self._format_rx_payload(data_payload)
+                    rx_text = format_rx_summary(
+                        ProtobufFormatter.get_message_type(data_payload),
+                        data_payload,
+                        ProtobufFormatter.format_payload_readable(data_payload)
                     )
                     return {
                         "ok": False,
@@ -572,10 +577,10 @@ class BleCycleWorker:
                     except Exception:
                         expected = None
 
-                rx_text = (
-                    f"TYPE: {self._pb_message_type(data_payload)}\n"
-                    f"HEX: {self._hex_short(data_payload)}\n\n"
-                    + self._format_rx_payload(data_payload)
+                rx_text = format_rx_summary(
+                    ProtobufFormatter.get_message_type(data_payload),
+                    data_payload,
+                    ProtobufFormatter.format_payload_readable(data_payload)
                 )
 
                 self._emit(tile_id, {
@@ -728,7 +733,7 @@ class BleCycleWorker:
                 export_info = None
                 overall_values = None
                 session_info = None
-                latest_rx_text = f"TYPE: {message_type}\nHEX: {self._hex_short(payload)}\n\n" + self._format_rx_payload(payload)
+                latest_rx_text = format_rx_summary(message_type, payload, ProtobufFormatter.format_payload_readable(payload))
                 try:
                     if message_type == "accept_session":
                         # AcceptSession contains version, config_hash, battery, etc.
@@ -784,7 +789,11 @@ class BleCycleWorker:
                                         else:
                                             latest_status = f"Measurement data missing ({len(measurement_data_list)})"
                                             data_collection_complete = False
-                                        latest_rx_text = f"TYPE: {self._pb_message_type(data_payload)}\nHEX: {self._hex_short(data_payload)}\n\n" + self._format_rx_payload(data_payload)
+                                        latest_rx_text = format_rx_summary(
+                                            ProtobufFormatter.get_message_type(data_payload),
+                                            data_payload,
+                                            ProtobufFormatter.format_payload_readable(data_payload)
+                                        )
                                     else:
                                         latest_status = f"Unexpected reply: {data_type}"
                                         data_collection_complete = False

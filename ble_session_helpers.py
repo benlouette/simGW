@@ -10,9 +10,7 @@ from typing import Callable, Optional
 import os
 import sys
 
-BASE_DIR = os.path.dirname(__file__)
-PROTOCOL_DIR = os.path.join(BASE_DIR, "protocol")
-CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
+from protocol_utils import BASE_DIR, PROTOCOL_DIR, CAPTURE_DIR
 if PROTOCOL_DIR not in sys.path:
     sys.path.insert(0, PROTOCOL_DIR)
     
@@ -248,7 +246,7 @@ class BleSessionHelpers:
             twf_type: TWF measurement type to request (5=Acceleration, 6=Velocity, 7=Enveloper3)
                      If None, uses DEFAULT_TWF_TYPE from config
         """
-        from config import DEFAULT_TWF_TYPE
+        from ble_config import DEFAULT_TWF_TYPE
         if twf_type is None:
             twf_type = DEFAULT_TWF_TYPE
         

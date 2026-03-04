@@ -1,4 +1,0 @@
-*.serial max_size:6
-*.measurement max_count: 4
-*.measurement_data  max_count: 4
-*.data_bytes max_size:256

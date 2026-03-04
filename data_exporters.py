@@ -8,8 +8,7 @@ import struct
 import time
 from typing import List, Dict, Optional
 
-BASE_DIR = os.path.dirname(__file__)
-CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
+from protocol_utils import CAPTURE_DIR
 
 
 class WaveformExporter:
