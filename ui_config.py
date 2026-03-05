@@ -56,7 +56,7 @@ MANUAL_ACTIONS: List[ManualAction] = [
     ("Acceleration TWF", "acceleration_twf"),  # Request AccelerationTwf
     ("Velocity TWF", "velocity_twf"),       # Request VelocityTwf
     ("Enveloper3 TWF", "enveloper3_twf"),  # Request Enveloper3Twf
-    ("Full Cycle", "full_cycle"),          # Overall + waveform from settings
+    ("Full Cycle", "full_cycle"),          # Overall + 3 waveform requests
     ("Connect Test", "connect_test"),       # Just connect and disconnect
 ]
 

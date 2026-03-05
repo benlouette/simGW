@@ -22,6 +22,7 @@ _SECTION_LINE = "=" * 80
 _ENTRY_SEPARATOR = "-" * 80
 _MAX_HEX_DUMP_BYTES = 100
 _HEX_CHUNK_SIZE = 32
+_MAX_DATA_BYTES_HEX_PREVIEW = 256
 
 
 class SessionRecorder:
@@ -63,6 +64,35 @@ class SessionRecorder:
         except Exception:
             pass
 
+    @staticmethod
+    def _bytes_to_hex_preview(data: bytes, max_bytes: int = _MAX_DATA_BYTES_HEX_PREVIEW) -> str:
+        """Format bytes as uppercase hex, truncated for very large payloads."""
+        if not data:
+            return ""
+        if len(data) <= max_bytes:
+            return data.hex(" ").upper()
+        shown = data[:max_bytes].hex(" ").upper()
+        return f"{shown} ... (+{len(data) - max_bytes} bytes)"
+
+    @staticmethod
+    def _strip_send_measurement_data_bytes_for_text(message: Any) -> Any:
+        """Clone App message and remove send_measurement.data.data_bytes for readable text output."""
+        cloned = app_pb2.App()
+        cloned.CopyFrom(message)
+        try:
+            for meas_data in getattr(cloned.send_measurement, "measurement_data", []):
+                data_content = getattr(meas_data, "data", None)
+                if data_content is None:
+                    continue
+                try:
+                    if data_content.HasField("data_bytes"):
+                        data_content.ClearField("data_bytes")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return cloned
+
     def _extract_key_fields(self, message: Any, msg_type: str) -> Dict[str, Any]:
         """Extract compact key fields from a parsed App message."""
         info: Dict[str, Any] = {}
@@ -78,7 +108,18 @@ class SessionRecorder:
 
         elif msg_type == "send_measurement":
             sm = message.send_measurement
-            info["measurement_count"] = len(getattr(sm, "measurement_data", []))
+            measurement_data = list(getattr(sm, "measurement_data", []))
+            info["measurement_count"] = len(measurement_data)
+            for index, meas_data in enumerate(measurement_data):
+                data_content = getattr(meas_data, "data", None)
+                if data_content is None:
+                    continue
+                raw_bytes = getattr(data_content, "data_bytes", None)
+                if not raw_bytes:
+                    continue
+                raw = bytes(raw_bytes)
+                info[f"measurement_{index}_bytes_len"] = len(raw)
+                info[f"measurement_{index}_bytes_hex"] = self._bytes_to_hex_preview(raw)
 
         elif msg_type == "open_session":
             os_msg = message.open_session
@@ -151,7 +192,10 @@ class SessionRecorder:
             info = self._extract_key_fields(message, msg_type)
 
             if msg_type != "data_upload":
-                proto_text = text_format.MessageToString(message, as_one_line=False).rstrip()
+                message_for_text = message
+                if msg_type == "send_measurement":
+                    message_for_text = self._strip_send_measurement_data_bytes_for_text(message)
+                proto_text = text_format.MessageToString(message_for_text, as_one_line=False).rstrip()
             else:
                 proto_text = ""
 

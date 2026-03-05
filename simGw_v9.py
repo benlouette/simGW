@@ -14,7 +14,6 @@ from ble_worker_services import (
     create_session_recorder,
     scan_for_matching_device,
 )
-from ble_waveform_service import collect_waveform_export
 from protobuf_formatters import ProtobufFormatter, OverallValuesExtractor
 from display_formatters import format_session_and_overall_text, format_rx_summary
 from data_exporters import WaveformExporter
@@ -23,11 +22,32 @@ from protocol_utils import (
     phase_rank,
     PHASE_ORDER,
 )
-from ble_config import get_uart_uuids
+from ble_config import (
+    MEASUREMENT_TYPE_ACCELERATION_TWF,
+    MEASUREMENT_TYPE_VELOCITY_TWF,
+    MEASUREMENT_TYPE_ENVELOPER3_TWF,
+    get_uart_uuids,
+)
 from ui_events import TileUpdatePayload, UiEvent, make_cycle_done, make_tile_update
 
 
 _METRICS_COLLECTION_LOOPS = 6
+_FULL_CYCLE_TWF_TYPES = (
+    MEASUREMENT_TYPE_ACCELERATION_TWF,
+    MEASUREMENT_TYPE_VELOCITY_TWF,
+    MEASUREMENT_TYPE_ENVELOPER3_TWF,
+)
+_WAVEFORM_KEY_BY_TYPE = {
+    MEASUREMENT_TYPE_ACCELERATION_TWF: "acceleration_twf",
+    MEASUREMENT_TYPE_VELOCITY_TWF: "velocity_twf",
+    MEASUREMENT_TYPE_ENVELOPER3_TWF: "enveloper3_twf",
+}
+_WAVEFORM_LABEL_BY_KEY = {
+    "acceleration_twf": "Acceleration TWF",
+    "velocity_twf": "Velocity TWF",
+    "enveloper3_twf": "Enveloper3 TWF",
+}
+_DEFAULT_WAVEFORM_KEY = "acceleration_twf"
 
 
 @dataclass
@@ -40,6 +60,7 @@ class TileState:
     checklist: Dict[str, str] = None  # key -> state
     overall_values: Optional[list] = None
     export_info: Optional[dict] = None
+    export_infos: Optional[dict] = None
     phase: str = "idle"
     last_export_raw: str = ""
 
@@ -159,11 +180,83 @@ class BleCycleWorker:
         """Queue one tile update event without phase normalization."""
         self.ui_queue.put(make_tile_update(tile_id, payload))
 
+    @staticmethod
+    def _waveform_key_for_type(twf_type: int) -> str:
+        return _WAVEFORM_KEY_BY_TYPE.get(int(twf_type), f"twf_{int(twf_type)}")
+
+    @staticmethod
+    def _waveform_label_for_key(waveform_key: str) -> str:
+        return _WAVEFORM_LABEL_BY_KEY.get(waveform_key, waveform_key)
+
+    @staticmethod
+    def _primary_export_info(export_infos: Dict[str, Optional[dict]]) -> Optional[dict]:
+        if not export_infos:
+            return None
+        primary = export_infos.get(_DEFAULT_WAVEFORM_KEY)
+        if primary:
+            return primary
+        for info in export_infos.values():
+            if info:
+                return info
+        return None
+
+    def _format_multi_export_text(self, export_infos: Dict[str, Optional[dict]]) -> str:
+        lines = []
+        for twf_type in _FULL_CYCLE_TWF_TYPES:
+            key = self._waveform_key_for_type(twf_type)
+            label = self._waveform_label_for_key(key)
+            info = export_infos.get(key)
+            if not info:
+                lines.append(f"- {label}: no data")
+                continue
+            if "error" in info:
+                lines.append(f"- {label}: ERROR {info.get('error')}")
+                continue
+            lines.append(f"- {label}:")
+            lines.append(f"  - raw: {info.get('raw', '')}")
+            if info.get("txt"):
+                lines.append(f"  - txt: {info.get('txt', '')}")
+            if info.get("samples"):
+                lines.append(f"  - samples: {info.get('samples', '')}")
+        return "\n".join(lines)
+
     def _create_ui_callback(self, tile_id: int) -> Callable[[TileUpdatePayload], None]:
         """Create a UI callback function for BLE helpers to avoid duplication."""
         def ui_callback(update_dict: TileUpdatePayload) -> None:
             self._queue_tile_update(tile_id, update_dict)
         return ui_callback
+
+    async def _request_waveform_capture(
+        self,
+        tile_id: int,
+        helpers: BleSessionHelpers,
+        rx_timeout: float,
+        twf_type: int,
+        status_prefix: str,
+        include_rx_text: bool,
+    ) -> dict:
+        waveform_key = self._waveform_key_for_type(twf_type)
+        waveform_label = self._waveform_label_for_key(waveform_key)
+
+        await asyncio.sleep(0.1)
+        await helpers.send_vibration_selection(twf_type=twf_type)
+
+        wave_payloads, received, expected, last_wave_rx = await self._collect_waveform_measurements(
+            tile_id=tile_id,
+            helpers=helpers,
+            rx_timeout=rx_timeout,
+            status_prefix=f"{status_prefix} {waveform_label}",
+            include_rx_text=include_rx_text,
+        )
+
+        export_info = self._export_wave_payloads(tile_id, wave_payloads, waveform_name=waveform_key)
+        return {
+            "waveform_key": waveform_key,
+            "export_info": export_info,
+            "received": received,
+            "expected": expected,
+            "last_rx_text": last_wave_rx,
+        }
 
     async def _collect_waveform_measurements(
         self,
@@ -213,29 +306,29 @@ class BleCycleWorker:
 
         return wave_payloads, received, expected, last_rx_text
 
-    def _export_wave_payloads(self, tile_id: int, wave_payloads: List[bytes]) -> Optional[dict]:
+    def _export_wave_payloads(self, tile_id: int, wave_payloads: List[bytes], waveform_name: Optional[str] = None) -> Optional[dict]:
         """Export waveform payloads, returning exporter output or error dict."""
         if not wave_payloads:
             return None
         try:
-            return self.waveform_exporter.export_waveform_capture(tile_id, wave_payloads)
+            return self.waveform_exporter.export_waveform_capture(tile_id, wave_payloads, waveform_name=waveform_name)
         except Exception as export_exc:
             return {"error": str(export_exc)}
 
     def run_cycle(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
-                name_contains: str = "", twf_type: int = None) -> None:
+                name_contains: str = "") -> None:
         self._clear_cancel_state_for_tile(tile_id)
         self._call_soon(self._run_cycle_impl(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root,
-                        name_contains, twf_type))
+                        name_contains))
 
     def run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str, record_sessions: bool, session_root: str,
-                name_contains: str = "", twf_type: int = None) -> None:
+                name_contains: str = "") -> None:
         self._clear_cancel_state_for_tile(tile_id)
         self._call_soon(self._run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root,
-                        name_contains, twf_type))
+                        name_contains))
 
     async def _run_manual_action(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, action: str, record_sessions: bool, session_root: str,
-                            name_contains: str = "", twf_type: int = None) -> None:
+                            name_contains: str = "") -> None:
         """
         REFACTORED: Execute manual BLE action using centralized BleSessionHelpers.
         Reduced from ~400 lines to ~150 lines.
@@ -361,22 +454,25 @@ class BleCycleWorker:
 
             elif action in ("acceleration_twf", "velocity_twf", "enveloper3_twf"):
                 # Map action to TWF type
-                twf_map = {"acceleration_twf": 5, "velocity_twf": 6, "enveloper3_twf": 7}
+                twf_map = {
+                    "acceleration_twf": MEASUREMENT_TYPE_ACCELERATION_TWF,
+                    "velocity_twf": MEASUREMENT_TYPE_VELOCITY_TWF,
+                    "enveloper3_twf": MEASUREMENT_TYPE_ENVELOPER3_TWF,
+                }
                 req_twf_type = twf_map[action]
-                
-                # Request specific waveform type
-                await asyncio.sleep(0.1)
-                await helpers.send_vibration_selection(twf_type=req_twf_type)
-
-                wave_payloads, received, expected, _last_wave_rx = await self._collect_waveform_measurements(
+                capture = await self._request_waveform_capture(
                     tile_id=tile_id,
                     helpers=helpers,
                     rx_timeout=rx_timeout,
+                    twf_type=req_twf_type,
                     status_prefix="Waveform blocks",
                     include_rx_text=True,
                 )
 
-                export_info = self._export_wave_payloads(tile_id, wave_payloads)
+                waveform_key = capture["waveform_key"]
+                export_info = capture["export_info"]
+                received = int(capture["received"] or 0)
+                expected = capture["expected"]
                 
                 status_text = f"Waveform done ({received}/{expected or '?'})"
                 rx_text = f"TYPE: send_measurement\n"
@@ -402,6 +498,7 @@ class BleCycleWorker:
                     "checklist": {"general_info_exchange": "done", "data_collection": "done", "close_session": "done"},
                     "rx_text": rx_text,
                     "export_info": export_info,
+                    "export_infos": {waveform_key: export_info},
                 })
 
             elif action == "full_cycle":
@@ -420,20 +517,25 @@ class BleCycleWorker:
                         overall_values = OverallValuesExtractor.extract_overall_values(msg.send_measurement)
                     except Exception:
                         pass
-                
-                # Request waveform with twf_type from settings
-                await asyncio.sleep(0.1)
-                await helpers.send_vibration_selection(twf_type=twf_type)
 
-                wave_payloads, received, expected, _last_wave_rx = await self._collect_waveform_measurements(
-                    tile_id=tile_id,
-                    helpers=helpers,
-                    rx_timeout=rx_timeout,
-                    status_prefix="Full cycle: waveform",
-                    include_rx_text=False,
-                )
+                export_infos: Dict[str, Optional[dict]] = {}
+                waveform_done = 0
+                for req_twf_type in _FULL_CYCLE_TWF_TYPES:
+                    capture = await self._request_waveform_capture(
+                        tile_id=tile_id,
+                        helpers=helpers,
+                        rx_timeout=rx_timeout,
+                        twf_type=req_twf_type,
+                        status_prefix="Full cycle",
+                        include_rx_text=False,
+                    )
+                    waveform_key = capture["waveform_key"]
+                    export_info = capture["export_info"]
+                    export_infos[waveform_key] = export_info
+                    if export_info and "error" not in export_info:
+                        waveform_done += 1
 
-                export_info = self._export_wave_payloads(tile_id, wave_payloads)
+                export_info = self._primary_export_info(export_infos)
                 
                 # Close session
                 await helpers.send_close_session()
@@ -441,22 +543,15 @@ class BleCycleWorker:
                 # Format display with session info + overall + export info
                 session_info = {"accept_msg": accept_session_msg, "payload": accept_session_payload}
                 rx_text = format_session_and_overall_text(session_info, overall_values)
-                rx_text += f"\n\n--- WAVEFORM EXPORT ---\n"
-                if export_info:
-                    if "error" in export_info:
-                        rx_text += f"EXPORT ERROR: {export_info['error']}"
-                    else:
-                        rx_text += f"- raw: {export_info['raw']}\n"
-                        if export_info.get('txt'):
-                            rx_text += f"- txt: {export_info['txt']}\n"
-                        if export_info.get('samples'):
-                            rx_text += f"- samples: {export_info['samples']}"
+                rx_text += "\n\n--- WAVEFORM EXPORTS ---\n"
+                rx_text += self._format_multi_export_text(export_infos)
                 
                 self._queue_tile_update(tile_id, {
-                    "status": f"Full cycle done (overall + waveform {received}/{expected or '?'})",
+                    "status": f"Full cycle done (overall + waveforms {waveform_done}/3)",
                     "checklist": {"general_info_exchange": "done", "data_collection": "done", "close_session": "done"},
                     "rx_text": rx_text,
                     "export_info": export_info,
+                    "export_infos": export_infos,
                 })
 
             else:
@@ -469,19 +564,8 @@ class BleCycleWorker:
         finally:
             await self._finalize_run(tile_id, client, helpers, recorder)
 
-    async def _collect_waveform_export(self, tile_id: int, _recv_app, rx_timeout: float) -> dict:
-        return await collect_waveform_export(
-            tile_id=tile_id,
-            recv_app=_recv_app,
-            rx_timeout=rx_timeout,
-            is_cancelled=lambda: self._is_cancelled(tile_id),
-            emit=lambda payload: self._emit(tile_id, payload),
-            export_waveform_capture=lambda tid, payloads: self.waveform_exporter.export_waveform_capture(tid, payloads),
-        )
-
-
     async def _run_cycle_impl(self, tile_id: int, address_prefix: str, mtu: int, scan_timeout: float, rx_timeout: float, record_sessions: bool, session_root: str,
-                        name_contains: str = "", twf_type: int = None) -> None:
+                        name_contains: str = "") -> None:
         """
         REFACTORED: Full auto cycle using centralized BleSessionHelpers.
         Reduced from ~350 lines to ~180 lines.
@@ -555,6 +639,7 @@ class BleCycleWorker:
                 latest_status = "Received"
                 error_info = None
                 export_info = None
+                export_infos = None
                 overall_values = None
                 session_info = None
                 latest_rx_text = format_rx_summary(message_type, payload, ProtobufFormatter.format_payload_readable(payload))
@@ -634,39 +719,38 @@ class BleCycleWorker:
                             self._queue_tile_update(tile_id, {"checklist": {"data_collection": "pending"}})
 
                         if data_collection_complete:
-                            self._emit(tile_id, {"phase": "waveform", "status": "Sending vibration request...", "checklist": {"data_collection": "in_progress"}})
-                            await helpers.send_vibration_selection(twf_type=twf_type)
-                            wf_res = await self._collect_waveform_export(tile_id, helpers.recv_app, rx_timeout)
-                            if wf_res.get("ok"):
-                                export_info = wf_res.get("export_info")
-                                received = int(wf_res.get("received") or 0)
-                                expected = wf_res.get("expected")
-                                latest_rx_text = wf_res.get("last_rx_text") or latest_rx_text
-                                if export_info and isinstance(export_info, dict) and ("error" not in export_info):
-                                    latest_status = f"Waveform done ({received}/{expected or '?'}) / exported {export_info.get('count','?')} blocks"
-                                    latest_rx_text = latest_rx_text + f"\n\nEXPORT:\n- raw: {export_info.get('raw','')}"
-                                    if export_info.get('txt'):
-                                        latest_rx_text = latest_rx_text + f"\n- txt: {export_info.get('txt','')}"
-                                    if export_info.get('index'):
-                                        latest_rx_text = latest_rx_text + f"\n- index: {export_info.get('index','')}"
-                                    if export_info.get('samples'):
-                                        latest_rx_text = latest_rx_text + f"\n- samples: {export_info.get('samples','')}"
-                                else:
-                                    latest_status = f"Waveform done ({received}/{expected or '?'}) / export failed"
-                                    if export_info and isinstance(export_info, dict) and export_info.get('error'):
-                                        latest_rx_text = latest_rx_text + f"\n\nEXPORT ERROR: {export_info.get('error')}"
+                            export_infos = {}
+                            waveform_done = 0
+                            for req_twf_type in _FULL_CYCLE_TWF_TYPES:
+                                capture = await self._request_waveform_capture(
+                                    tile_id=tile_id,
+                                    helpers=helpers,
+                                    rx_timeout=rx_timeout,
+                                    twf_type=req_twf_type,
+                                    status_prefix="Waveform",
+                                    include_rx_text=True,
+                                )
+                                waveform_key = capture["waveform_key"]
+                                one_export = capture["export_info"]
+                                export_infos[waveform_key] = one_export
+                                if capture.get("last_rx_text"):
+                                    latest_rx_text = capture["last_rx_text"]
+                                if one_export and isinstance(one_export, dict) and ("error" not in one_export):
+                                    waveform_done += 1
+
+                            export_info = self._primary_export_info(export_infos)
+                            if waveform_done == 3:
+                                latest_status = "Waveforms done (3/3)"
+                            else:
+                                latest_status = f"Waveforms done ({waveform_done}/3)"
+
+                            latest_rx_text = latest_rx_text + "\n\nEXPORTS:\n" + self._format_multi_export_text(export_infos)
+                            if export_infos is not None:
                                 self._emit(tile_id, {"phase": "waveform", "checklist": {"data_collection": "done"}})
                                 self._emit(tile_id, {"phase": "close_session", "checklist": {"close_session": "in_progress"}})
                                 await asyncio.sleep(0.1)
                                 await helpers.send_close_session()
                                 self._emit(tile_id, {"phase": "close_session", "checklist": {"close_session": "done"}})
-                            else:
-                                data_collection_complete = False
-                                export_info = None
-                                err = wf_res.get('error_info') if isinstance(wf_res, dict) else None
-                                if err:
-                                    self._emit(tile_id, {"phase": "waveform", "status": f"Waveform error: {err.get('where','?')} {err.get('type','')} {err.get('msg','')}", "error_info": err})
-                                self._queue_tile_update(tile_id, {"checklist": {"data_collection": "pending"}})
                     else:
                         latest_status = f"Unexpected reply: {message_type}"
                 except Exception as exc:
@@ -679,7 +763,14 @@ class BleCycleWorker:
                     if formatted_rx_text:
                         latest_rx_text = formatted_rx_text
                 
-                self._queue_tile_update(tile_id, {"status": latest_status, "rx_text": latest_rx_text, "export_info": export_info, "overall_values": overall_values, "error": error_info})
+                self._queue_tile_update(tile_id, {
+                    "status": latest_status,
+                    "rx_text": latest_rx_text,
+                    "export_info": export_info,
+                    "export_infos": export_infos,
+                    "overall_values": overall_values,
+                    "error": error_info,
+                })
 
             await helpers.stop_notifications()
             

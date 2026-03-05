@@ -13,8 +13,14 @@ import os
 import re
 import time
 import tkinter as tk
+from tkinter import ttk
 from typing import Dict, Optional
 
+from ble_config import (
+    MEASUREMENT_TYPE_ACCELERATION_TWF,
+    MEASUREMENT_TYPE_VELOCITY_TWF,
+    MEASUREMENT_TYPE_ENVELOPER3_TWF,
+)
 from data_exporters import WaveformParser
 from ui_config import CHECKLIST_ITEMS
 
@@ -30,6 +36,14 @@ try:
 except Exception:
     Figure = None
     FigureCanvasTkAgg = None
+
+
+def _twf_combo_values() -> tuple[str, str, str]:
+    return (
+        f"{MEASUREMENT_TYPE_ACCELERATION_TWF} - Acceleration TWF",
+        f"{MEASUREMENT_TYPE_VELOCITY_TWF} - Velocity TWF",
+        f"{MEASUREMENT_TYPE_ENVELOPER3_TWF} - Enveloper3 TWF",
+    )
 
 
 def _build_kpi_card(app, parent: tk.Frame, title: str, variable: tk.StringVar) -> None:
@@ -125,6 +139,18 @@ def build_ui_demo(app, parent: tk.Frame) -> None:
     header_row.pack(fill=tk.X)
 
     tk.Label(header_row, text="Waveform", bg=app.colors["panel"], fg=app.colors["text"], font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
+
+    selector_wrap = tk.Frame(header_row, bg=app.colors["panel"])
+    selector_wrap.pack(side=tk.RIGHT)
+    tk.Label(selector_wrap, text="Display:", bg=app.colors["panel"], fg=app.colors["muted"], font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+
+    twf_combo = ttk.Combobox(selector_wrap, textvariable=app.twf_type_var, width=24, state="readonly")
+    twf_values = _twf_combo_values()
+    twf_combo["values"] = twf_values
+    if app.twf_type_var.get() not in twf_values:
+        twf_combo.current(0)
+    twf_combo.bind("<<ComboboxSelected>>", app._on_demo_waveform_selector_changed)
+    twf_combo.pack(side=tk.LEFT)
 
     app.demo_plot_label = tk.Label(header_row, text=_WAITING_WAVEFORM_TEXT, bg=app.colors["panel"], fg=app.colors["muted"], font=("Segoe UI", 10))
     app.demo_plot_label.pack(side=tk.LEFT, padx=(10, 0))

@@ -67,23 +67,26 @@ class WaveformExporter:
         self.capture_dir = capture_dir
         os.makedirs(self.capture_dir, exist_ok=True)
 
-    def export_waveform_capture(self, tile_id: int, payloads: list) -> dict[str, Any]:
+    def export_waveform_capture(self, tile_id: int, payloads: list, waveform_name: Optional[str] = None) -> dict[str, Any]:
         """Export one waveform capture as `.bin` + optional `.txt` sample dump.
 
         Args:
             tile_id: Worker tile identifier.
             payloads: Ordered list of raw protobuf payload bytes.
+            waveform_name: Optional suffix describing waveform type
+                (e.g. `acceleration_twf`, `velocity_twf`, `enveloper3_twf`).
 
         Returns:
             dict[str, Any]:
                 - raw: path to binary capture
-                - txt: path to sample text file (or None on parse failure)
+                - txt: path to sample text file
                 - count: number of payloads written
         """
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        base = os.path.join(self.capture_dir, f"waveform_tile{tile_id}_{timestamp}")
+        suffix = f"_{str(waveform_name).strip()}" if waveform_name else ""
+        base = os.path.join(self.capture_dir, f"waveform_tile{tile_id}_{timestamp}{suffix}")
         raw_path = base + ".bin"
-        txt_path: Optional[str] = base + ".txt"
+        txt_path: str = base + ".txt"
 
         self._write_payload_capture(raw_path, payloads)
 
@@ -91,10 +94,9 @@ class WaveformExporter:
             samples, _meta = WaveformParser.extract_true_waveform_samples(raw_path)
             self._write_samples_text(txt_path, samples)
         except Exception as exc:
-            txt_path = None
-            print(f"Warning: Failed to export samples to text: {exc}")
+            self._write_fallback_text(txt_path, raw_path, exc)
 
-        return {"raw": raw_path, "txt": txt_path, "count": len(payloads)}
+        return {"raw": raw_path, "txt": txt_path, "count": len(payloads), "waveform_name": waveform_name}
 
     @staticmethod
     def _write_payload_capture(raw_path: str, payloads: list) -> None:
@@ -107,6 +109,12 @@ class WaveformExporter:
     def _write_samples_text(txt_path: str, samples: list[int]) -> None:
         with open(txt_path, "w") as handle:
             handle.write(" ".join(str(sample) for sample in samples))
+
+    @staticmethod
+    def _write_fallback_text(txt_path: str, raw_path: str, exc: Exception) -> None:
+        with open(txt_path, "w") as handle:
+            handle.write(f"Unable to decode waveform samples from: {raw_path}\n")
+            handle.write(f"Error: {type(exc).__name__}: {exc}\n")
 
 
 class WaveformParser:

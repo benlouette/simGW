@@ -7,14 +7,16 @@ Simulated BLE gateway application for SKF sensors ELO-IMX1 with real-time data c
 ### 🎯 **Demo Tab**
 - User-friendly KPI display with timeline visualization
 - Session information and overall measurements
-- Waveform plotting with matplotlib integration
-- Auto-cycle workflow: Scan → Connect → Overall → Waveform → Close
+- Waveform plotting with type selector (Acceleration / Velocity / Enveloper3)
+- Auto-cycle workflow: Scan → Connect → Overall → 3x Waveform → Close
 
 ### 🔧 **Expert Tab**
 - Multi-tile device monitoring 
 - Manual action control (Session Test, Overall, TWF capture, Full Cycle)
 - Real-time protobuf message decoding
 - Hex dump display and session logging
+- Per-tile plotting buttons for Acceleration / Velocity / Enveloper3
+- Optional FFT spectrum plot in a second window (positive frequencies to Nyquist)
 
 ### 📱 **Devices Tab**
 - BLE device scanner with configurable address + name filtering
@@ -23,7 +25,6 @@ Simulated BLE gateway application for SKF sensors ELO-IMX1 with real-time data c
 - Auto-scan while the tab is active
 
 ### ⚙️ **Settings Tab**
-- TWF type selection (Acceleration/Velocity/Enveloper3)
 - Session recording toggle
 - MTU configuration
 - Session output directory configuration
@@ -45,7 +46,7 @@ Simulated BLE gateway application for SKF sensors ELO-IMX1 with real-time data c
 - **ble_session_helpers.py** - BLE communication and session management
 - **ble_filters.py** - Device filtering and advertising data formatting
 - **protobuf_formatters.py** - Protobuf message parsing and display
-- **data_exporters.py** - Waveform export to binary format
+- **data_exporters.py** - Waveform export (`.bin` + `.txt`) and parser utilities
 - **session_recorder.py** - Session logging with protobuf decoding
 
 **Worker Services (extracted):**
@@ -84,6 +85,7 @@ Simulated BLE gateway application for SKF sensors ELO-IMX1 with real-time data c
   - `bleak` - Cross-platform BLE library
   - `protobuf` - Protocol Buffers runtime
   - `matplotlib` - For waveform plotting in Demo tab
+  - `numpy` - (Optional) For Expert FFT spectrum plotting
 
 Install dependencies:
 
@@ -102,9 +104,9 @@ pip install -r requirements.txt
 
 ### Demo Tab - Quick Workflow
 1. Click **"Start Auto"** to begin automatic cycle
-2. Application automatically: Scans → Connects → Requests Overall → Requests Waveform → Closes
+2. Application automatically: Scans → Connects → Requests Overall → Requests 3 waveform types → Closes
 3. View KPIs in the timeline visualization
-4. Plot waveform data 
+4. Choose waveform display type directly in Demo plot header
 
 ### Expert Tab - Manual Control
 1. **filter** for devices, select one
@@ -112,9 +114,11 @@ pip install -r requirements.txt
    - **Session Test**: Quick session info check
    - **Overall**: Request all 4 overall measurements
    - **Acceleration/Velocity/Enveloper3 TWF**: Request specific waveform
-   - **Full Cycle**: Overall + TWF (from Settings)
+  - **Full Cycle**: Overall + all 3 waveform requests
    - **Connect Test**: Test BLE connection only
-3. Monitor real-time RX/TX messages in tile displays
+3. Use dedicated plot buttons per waveform type
+4. Toggle FFT ON/OFF from Expert tools area (second spectrum window)
+5. Monitor real-time RX/TX messages in tile displays
 
 ### Session Recording
 Sessions are automatically logged to `sessions/<sensor_id>_<timestamp>/` with:
@@ -124,8 +128,8 @@ Sessions are automatically logged to `sessions/<sensor_id>_<timestamp>/` with:
 ### Waveform Export
 Waveforms are exported to `captures/` from collected protobuf payloads:
 - **`.bin`** always (raw payload blocks)
-- **`.txt`** optional (human-readable blocks, when available)
-- Optional side outputs (index/samples) depending on payload content
+- **`.txt`** always (samples when decodable, fallback note otherwise)
+- Filenames include waveform type suffix (e.g. `..._acceleration_twf.bin`, `..._velocity_twf.bin`, `..._enveloper3_twf.bin`)
 
 ## UI Theme
 
@@ -150,6 +154,10 @@ Modern dark theme (Windows 11 optimized):
 - Manual actions list
 - Checklist items
 
+### Demo Waveform Display Selector
+- The waveform selector is in Demo plot header (not in Settings).
+- It controls which already-exported waveform is displayed/plotted.
+
 ### Protocol Settings (protocol_utils.py)
 - Phase definitions (scanning, connecting, metrics, etc.)
 - Public phase order constant (`PHASE_ORDER`) used for monotonic UI phase updates
@@ -171,7 +179,7 @@ The `.gitignore` file excludes:
 - `.vscode/`, `.idea/` - IDE settings
 
 ### Data Directories
-- **captures/**: Waveform binary files (`.bin`)
+- **captures/**: Waveform capture files (`.bin` + `.txt`)
 - **sessions/**: Session logs with events and metadata
 - **protocol/**: Protobuf definitions and generated Python files
 

@@ -28,6 +28,7 @@ class TileUpdatePayload(TypedDict, total=False):
     checklist: ChecklistStateMap
     overall_values: OverallValues
     export_info: ExportInfo
+    export_infos: Dict[str, ExportInfo]
     error: UiErrorInfo
     error_info: UiErrorInfo
     ts_ms: int

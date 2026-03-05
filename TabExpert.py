@@ -70,11 +70,21 @@ def build_ui_expert(app, parent: tk.Frame) -> None:
     util = tk.Frame(manual, bg=app.colors["panel"])
     util.pack(fill=tk.X)
 
+    spectrum_btn = ttk.Button(
+        util,
+        text="FFT Spectrum: ON",
+        width=_BUTTON_WIDTH,
+        command=app._toggle_expert_spectrum_plot,
+    )
+
     util_btns = [
         ttk.Button(util, text="Clear logs", width=_BUTTON_WIDTH, command=app._clear_tiles),
         ttk.Button(util, text="Plot Latest", width=_BUTTON_WIDTH, command=app._plot_latest_waveform),
+        spectrum_btn,
     ]
     wrap_buttons(app, util, util_btns, min_btn_px=_WRAP_MIN_BUTTON_PX)
+    app.expert_spectrum_button = spectrum_btn
+    app._refresh_expert_spectrum_button()
 
     tiles_frame = tk.Frame(parent, bg=app.colors["bg"])
     tiles_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(12, 16))

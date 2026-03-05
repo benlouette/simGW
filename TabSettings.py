@@ -9,12 +9,6 @@ This tab groups runtime configuration fields used by worker cycles.
 import tkinter as tk
 from tkinter import ttk
 
-from ble_config import (
-    MEASUREMENT_TYPE_ACCELERATION_TWF,
-    MEASUREMENT_TYPE_VELOCITY_TWF,
-    MEASUREMENT_TYPE_ENVELOPER3_TWF,
-)
-
 _ROW_PAD_Y = (10, 0)
 
 
@@ -26,15 +20,6 @@ def _build_header(app, parent: tk.Frame) -> None:
     left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=12, pady=12)
     tk.Label(left, text="Settings", bg=app.colors["panel"], fg=app.colors["text"], font=("Segoe UI", 14, "bold")).pack(anchor="w")
     tk.Label(left, text="Configuration and defaults", bg=app.colors["panel"], fg=app.colors["muted"]).pack(anchor="w", pady=(2, 0))
-
-
-def _twf_combo_values() -> tuple[str, str, str]:
-    return (
-        f"{MEASUREMENT_TYPE_ACCELERATION_TWF} - Acceleration TWF",
-        f"{MEASUREMENT_TYPE_VELOCITY_TWF} - Velocity TWF",
-        f"{MEASUREMENT_TYPE_ENVELOPER3_TWF} - Enveloper3 TWF",
-    )
-
 
 def build_ui_settings(app, parent: tk.Frame) -> None:
     """Build the Settings tab controls used by scan/cycle runtime."""
@@ -60,12 +45,6 @@ def build_ui_settings(app, parent: tk.Frame) -> None:
 
     tk.Label(inner, text="MTU", bg=app.colors["panel"], fg=app.colors["muted"]).grid(row=2, column=0, sticky="w", pady=_ROW_PAD_Y)
     ttk.Entry(inner, textvariable=app.mtu_var, width=10).grid(row=2, column=1, sticky="w", pady=_ROW_PAD_Y)
-
-    tk.Label(inner, text="Waveform type", bg=app.colors["panel"], fg=app.colors["muted"]).grid(row=3, column=0, sticky="w", pady=_ROW_PAD_Y)
-    twf_combo = ttk.Combobox(inner, textvariable=app.twf_type_var, width=24, state="readonly")
-    twf_combo["values"] = _twf_combo_values()
-    twf_combo.current(0)
-    twf_combo.grid(row=3, column=1, columnspan=2, sticky="w", pady=_ROW_PAD_Y)
 
     util = tk.Frame(body, bg=app.colors["bg"])
     util.pack(fill=tk.X, pady=(12, 0))

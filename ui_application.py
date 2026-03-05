@@ -35,7 +35,11 @@ from ui_config import (
     UI_POLL_INTERVAL_MS, CHECKLIST_ITEMS, CHECKLIST_STATE_MAP, 
     UI_COLORS
 )
-from ble_config import MEASUREMENT_TYPE_ACCELERATION_TWF
+from ble_config import (
+    MEASUREMENT_TYPE_ACCELERATION_TWF,
+    MEASUREMENT_TYPE_VELOCITY_TWF,
+    MEASUREMENT_TYPE_ENVELOPER3_TWF,
+)
 from data_exporters import WaveformParser
 from ui_helpers import apply_windows_dark_mode, apply_dark_theme
 from TabDevices import (
@@ -55,6 +59,17 @@ from ui_events import TileUpdatePayload, UiEvent
 
 WaveformExportTools = WaveformParser
 _CHECKLIST_PENDING_SYMBOL = "☐"
+_WAVEFORM_KEY_BY_TYPE = {
+    MEASUREMENT_TYPE_ACCELERATION_TWF: "acceleration_twf",
+    MEASUREMENT_TYPE_VELOCITY_TWF: "velocity_twf",
+    MEASUREMENT_TYPE_ENVELOPER3_TWF: "enveloper3_twf",
+}
+_WAVEFORM_LABEL_BY_KEY = {
+    "acceleration_twf": "Acceleration TWF",
+    "velocity_twf": "Velocity TWF",
+    "enveloper3_twf": "Enveloper3 TWF",
+}
+_DEFAULT_WAVEFORM_KEY = "acceleration_twf"
 
 
 def create_app_class(BleCycleWorker, TileState):
@@ -107,6 +122,10 @@ def create_app_class(BleCycleWorker, TileState):
             self.demo_checklist_state = {key: "pending" for key, _title in CHECKLIST_ITEMS}
             self.demo_timeline_labels = {}  # key -> (dot_label, text_label)
 
+            # Expert plotting options
+            self.expert_plot_spectrum_var = tk.BooleanVar(value=True)
+            self.expert_spectrum_button = None
+
 
             # Devices tab state
             self.devices_tree = None
@@ -128,7 +147,7 @@ def create_app_class(BleCycleWorker, TileState):
             self.record_sessions_var = tk.BooleanVar(value=True)
             self.session_root_var = tk.StringVar(value="sessions")
             self.mtu_var = tk.StringVar(value="247")
-            self.twf_type_var = tk.StringVar(value="5")  # Default: Acceleration TWF
+            self.twf_type_var = tk.StringVar(value=f"{MEASUREMENT_TYPE_ACCELERATION_TWF} - Acceleration TWF")
 
             # Apply dark theme and Windows customization
             self.colors = UI_COLORS
@@ -275,13 +294,7 @@ def create_app_class(BleCycleWorker, TileState):
             record_sessions = bool(self.record_sessions_var.get())
             session_root = self.session_root_var.get().strip() or "sessions"
             name_contains = self.adv_name_contains_var.get().strip()
-            # Parse TWF type (extract first number from "5 - Acceleration TWF" format)
-            twf_type_str = self.twf_type_var.get().strip()
-            try:
-                twf_type = int(twf_type_str.split()[0]) if twf_type_str else MEASUREMENT_TYPE_ACCELERATION_TWF
-            except (ValueError, IndexError):
-                twf_type = MEASUREMENT_TYPE_ACCELERATION_TWF
-            return address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, twf_type
+            return address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains
     
         def _safe_destroy(self, widget) -> None:
             if widget is None:
@@ -360,11 +373,11 @@ def create_app_class(BleCycleWorker, TileState):
             return tile_id
     
         def _start_worker_cycle(self, tile_id: int, action: str = None) -> None:
-            address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, twf_type = self._read_runtime_params()
+            address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains = self._read_runtime_params()
             if action is None:
-                self.worker.run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains, twf_type)
+                self.worker.run_cycle(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, record_sessions, session_root, name_contains)
             else:
-                self.worker.run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root, name_contains, twf_type)
+                self.worker.run_manual_action(tile_id, address_prefix, mtu, scan_timeout, rx_timeout, action, record_sessions, session_root, name_contains)
     
         def _on_start(self) -> None:
             self._reset_auto_state()
@@ -442,21 +455,42 @@ def create_app_class(BleCycleWorker, TileState):
                 lines.append(f"(+{more} more)")
             return "\n".join(lines)
     
-        def _format_export_compact(self, export_info: Optional[dict]) -> str:
+        def _format_export_compact(self, export_payload: Optional[dict]) -> str:
             """Return a compact export summary for Expert tiles."""
-            if not export_info:
+            if not export_payload:
                 return "Export: •"
-            raw = export_info.get("raw") if isinstance(export_info, dict) else None
-            idx = export_info.get("index") if isinstance(export_info, dict) else None
-            cnt = export_info.get("count") if isinstance(export_info, dict) else None
-            parts = []
-            if raw:
-                parts.append(f"- raw: {raw}")
-            if idx:
-                parts.append(f"- index: {idx}")
-            if cnt not in (None, ""):
-                parts.append(f"- blocks: {cnt}")
-            return "Export:\n" + ("\n".join(parts) if parts else "•")
+
+            if not isinstance(export_payload, dict):
+                return "Export: •"
+
+            if "raw" in export_payload or "txt" in export_payload or "count" in export_payload:
+                raw = export_payload.get("raw")
+                idx = export_payload.get("index")
+                cnt = export_payload.get("count")
+                parts = []
+                if raw:
+                    parts.append(f"- raw: {raw}")
+                if idx:
+                    parts.append(f"- index: {idx}")
+                if cnt not in (None, ""):
+                    parts.append(f"- blocks: {cnt}")
+                return "Export:\n" + ("\n".join(parts) if parts else "•")
+
+            lines = ["Export:"]
+            for waveform_key in (_DEFAULT_WAVEFORM_KEY, "velocity_twf", "enveloper3_twf"):
+                info = export_payload.get(waveform_key)
+                if not isinstance(info, dict):
+                    continue
+                label = self._waveform_label_for_key(waveform_key)
+                raw = info.get("raw")
+                if raw:
+                    lines.append(f"- {label}: {raw}")
+                elif info.get("error"):
+                    lines.append(f"- {label}: ERROR")
+                else:
+                    lines.append(f"- {label}: •")
+
+            return "\n".join(lines) if len(lines) > 1 else "Export: •"
     
         def _create_tile(self, tile_id: int) -> None:
             card = tk.Frame(
@@ -512,8 +546,14 @@ def create_app_class(BleCycleWorker, TileState):
             btn_row = tk.Frame(body, bg=self.colors["panel"])
             btn_row.pack(anchor="w", pady=(6, 0), fill=tk.X)
             
-            plot_btn = ttk.Button(btn_row, text="Plot Waveform", width=18, command=lambda tid=tile_id: self._plot_tile_waveform(tid))
+            plot_btn = ttk.Button(btn_row, text="Plot Accel", width=14, command=lambda tid=tile_id: self._plot_tile_waveform(tid, "acceleration_twf"))
             plot_btn.pack(side=tk.LEFT, padx=(0, 6))
+
+            plot_vel_btn = ttk.Button(btn_row, text="Plot Vel", width=12, command=lambda tid=tile_id: self._plot_tile_waveform(tid, "velocity_twf"))
+            plot_vel_btn.pack(side=tk.LEFT, padx=(0, 6))
+
+            plot_env_btn = ttk.Button(btn_row, text="Plot Env3", width=12, command=lambda tid=tile_id: self._plot_tile_waveform(tid, "enveloper3_twf"))
+            plot_env_btn.pack(side=tk.LEFT, padx=(0, 6))
             
             details_btn = ttk.Button(btn_row, text="View Details", width=18, command=lambda tid=tile_id: self._view_session_details(tid))
             details_btn.pack(side=tk.LEFT)
@@ -529,6 +569,8 @@ def create_app_class(BleCycleWorker, TileState):
                 "checklist": checklist_labels,
                 "checklist_titles": checklist_titles,
                 "plot_btn": plot_btn,
+                "plot_vel_btn": plot_vel_btn,
+                "plot_env_btn": plot_env_btn,
                 "details_btn": details_btn,
             }
     
@@ -539,16 +581,26 @@ def create_app_class(BleCycleWorker, TileState):
                 return
             self._plot_waveform_from_export(export_info, title=title)
     
-        def _plot_tile_waveform(self, tile_id: int) -> None:
+        def _plot_tile_waveform(self, tile_id: int, waveform_key: str = _DEFAULT_WAVEFORM_KEY) -> None:
+            export_infos = self.tile_export_info.get(tile_id)
+            selected_export = None
+            if isinstance(export_infos, dict):
+                if waveform_key in export_infos and isinstance(export_infos.get(waveform_key), dict):
+                    selected_export = export_infos.get(waveform_key)
+                elif waveform_key == _DEFAULT_WAVEFORM_KEY and ("raw" in export_infos or "txt" in export_infos):
+                    # Legacy single-export payload (pre multi-waveform map)
+                    selected_export = export_infos
+
             self._plot_export_info(
-                self.tile_export_info.get(tile_id),
-                title=f"Tile {tile_id}",
+                selected_export,
+                title=f"Tile {tile_id} • {self._waveform_label_for_key(waveform_key)}",
                 empty_msg=f"No export available yet for tile {tile_id}.",
             )
     
         def _plot_latest_waveform(self) -> None:
+            selected_export = self._resolve_selected_export_info(self.latest_export_info)
             self._plot_export_info(
-                self.latest_export_info,
+                selected_export,
                 title="Latest waveform export",
                 empty_msg="No waveform export available yet.",
             )
@@ -700,13 +752,54 @@ def create_app_class(BleCycleWorker, TileState):
                 # Y axis label with TWF type
                 ylabel = f"{twf_type.replace('Twf', '')} (raw {data_type})"
                 
-                plt.figure(figsize=(12, 6))
-                plt.plot(x, y, linewidth=0.5)
-                plt.title(plot_title)
-                plt.xlabel(xlabel)
-                plt.ylabel(ylabel)
-                plt.grid(True, alpha=0.3)
-                plt.tight_layout()
+                time_fig = plt.figure(figsize=(12, 6))
+                time_ax = time_fig.add_subplot(111)
+                time_ax.plot(x, y, linewidth=0.5)
+                time_ax.set_title(plot_title)
+                time_ax.set_xlabel(xlabel)
+                time_ax.set_ylabel(ylabel)
+                time_ax.grid(True, alpha=0.3)
+                time_fig.tight_layout()
+
+                show_spectrum = False
+                try:
+                    spectrum_var = getattr(self, "expert_plot_spectrum_var", None)
+                    show_spectrum = bool(spectrum_var.get()) if spectrum_var is not None else False
+                except Exception:
+                    show_spectrum = False
+
+                if show_spectrum:
+                    try:
+                        import numpy as np
+
+                        samples = np.asarray(y, dtype=float)
+                        if samples.size >= 2:
+                            samples = samples - float(np.mean(samples))
+                            window = np.hanning(samples.size)
+                            windowed = samples * window
+
+                            spectrum = np.fft.rfft(windowed)
+                            magnitude = np.abs(spectrum)
+
+                            if fs > 0.0:
+                                freqs = np.fft.rfftfreq(samples.size, d=1.0 / fs)
+                                spectrum_xlabel = "Frequency (Hz)"
+                                nyquist_text = f"Nyquist: {fs/2:.1f} Hz"
+                            else:
+                                freqs = np.arange(magnitude.size)
+                                spectrum_xlabel = "Frequency bin"
+                                nyquist_text = "Nyquist: n/a"
+
+                            spec_fig = plt.figure(figsize=(12, 6))
+                            spec_ax = spec_fig.add_subplot(111)
+                            spec_ax.plot(freqs, magnitude, linewidth=0.8)
+                            spec_ax.set_title(f"Spectrum • {twf_type} • {nyquist_text}")
+                            spec_ax.set_xlabel(spectrum_xlabel)
+                            spec_ax.set_ylabel("Magnitude")
+                            spec_ax.grid(True, alpha=0.3)
+                            spec_fig.tight_layout()
+                    except Exception as fft_exc:
+                        self._log("WARN", f"Spectrum plot unavailable: {fft_exc}")
                 plt.show()
                 
             except Exception as e:
@@ -737,6 +830,99 @@ def create_app_class(BleCycleWorker, TileState):
         def _is_devices_tab_selected(self) -> bool:
             widget = self._selected_notebook_widget()
             return widget is not None and widget == getattr(self, "_devices_tab_widget", None)
+
+        def _selected_waveform_type(self) -> int:
+            raw_value = str(self.twf_type_var.get() or "").strip()
+            try:
+                return int(raw_value.split()[0]) if raw_value else MEASUREMENT_TYPE_ACCELERATION_TWF
+            except Exception:
+                return MEASUREMENT_TYPE_ACCELERATION_TWF
+
+        def _selected_waveform_key(self) -> str:
+            return _WAVEFORM_KEY_BY_TYPE.get(self._selected_waveform_type(), _DEFAULT_WAVEFORM_KEY)
+
+        def _refresh_expert_spectrum_button(self) -> None:
+            """Refresh Expert FFT toggle button text/style."""
+            btn = getattr(self, "expert_spectrum_button", None)
+            if btn is None:
+                return
+            enabled = bool(self.expert_plot_spectrum_var.get())
+            btn.configure(text=("FFT Spectrum: ON" if enabled else "FFT Spectrum: OFF"))
+            btn.configure(style=("Accent.TButton" if enabled else "TButton"))
+
+        def _toggle_expert_spectrum_plot(self) -> None:
+            """Toggle optional FFT spectrum plot for Expert waveform plotting."""
+            current = bool(self.expert_plot_spectrum_var.get())
+            self.expert_plot_spectrum_var.set(not current)
+            self._refresh_expert_spectrum_button()
+
+        @staticmethod
+        def _waveform_label_for_key(waveform_key: str) -> str:
+            return _WAVEFORM_LABEL_BY_KEY.get(waveform_key, waveform_key)
+
+        def _resolve_selected_export_info(self, export_infos: Any, fallback_export: Optional[dict] = None) -> Optional[dict]:
+            selected_key = self._selected_waveform_key()
+
+            if isinstance(export_infos, dict):
+                if "raw" in export_infos or "txt" in export_infos or "count" in export_infos:
+                    return export_infos
+
+                selected = export_infos.get(selected_key)
+                if isinstance(selected, dict):
+                    return selected
+
+                default_export = export_infos.get(_DEFAULT_WAVEFORM_KEY)
+                if isinstance(default_export, dict):
+                    return default_export
+
+                for value in export_infos.values():
+                    if isinstance(value, dict):
+                        return value
+
+            if isinstance(fallback_export, dict):
+                return fallback_export
+            return None
+
+        def _plot_selected_demo_waveform(self, st: Any, force: bool = False) -> bool:
+            export_info = self._resolve_selected_export_info(getattr(st, "export_infos", None), getattr(st, "export_info", None))
+            if not export_info or not isinstance(export_info, dict):
+                return False
+
+            raw_path = export_info.get("raw")
+            if not raw_path:
+                return False
+            if (not force) and raw_path == self._demo_last_plotted_raw:
+                return True
+
+            self._demo_last_plotted_raw = raw_path
+            self.latest_export_info = export_info
+            try:
+                self.demo_plot_label.config(text="Rendering waveform...")
+                demo_plot_waveform_from_raw_export(self, raw_path)
+                selected_label = self._waveform_label_for_key(self._selected_waveform_key())
+                self.demo_waveform_var.set(f"{selected_label} received")
+                return True
+            except Exception as e:
+                self.demo_plot_label.config(text=f"(plot error: {type(e).__name__})")
+                self._log("ERROR", f"Waveform plot failed: {e}")
+                return False
+
+        def _on_demo_waveform_selector_changed(self, _evt=None) -> None:
+            """Re-render Demo waveform panel using currently selected waveform type."""
+            tile_id = getattr(self, "_demo_mirrored_tile_id", None)
+            if tile_id is None:
+                self.demo_waveform_var.set("•")
+                return
+            st = self.tile_state.get(tile_id)
+            if st is None:
+                self.demo_waveform_var.set("•")
+                return
+            plotted = self._plot_selected_demo_waveform(st, force=True)
+            if not plotted:
+                selected_label = self._waveform_label_for_key(self._selected_waveform_key())
+                self.demo_waveform_var.set("•")
+                if self.demo_plot_label is not None:
+                    self.demo_plot_label.configure(text=f"(waiting for {selected_label})")
 
         @staticmethod
         def _extract_overall_display_text(rx_text: str) -> Optional[str]:
@@ -857,12 +1043,31 @@ def create_app_class(BleCycleWorker, TileState):
             if "overall_values" in payload and payload.get("overall_values") is not None:
                 st.overall_values = payload.get("overall_values")
                 self.latest_overall_values = st.overall_values
+            if "export_infos" in payload and payload.get("export_infos"):
+                incoming_infos = payload.get("export_infos")
+                if isinstance(incoming_infos, dict):
+                    current_infos = getattr(st, "export_infos", None)
+                    if not isinstance(current_infos, dict):
+                        current_infos = {}
+                    current_infos.update(incoming_infos)
+                    st.export_infos = current_infos
+                    self.tile_export_info[tile_id] = current_infos
+                    selected_export = self._resolve_selected_export_info(current_infos, st.export_info)
+                    if selected_export:
+                        self.latest_export_info = selected_export
             if "export_info" in payload and payload.get("export_info"):
                 st.export_info = payload.get("export_info")
-                self.tile_export_info[tile_id] = st.export_info
-                self.latest_export_info = st.export_info
+                if isinstance(getattr(st, "export_infos", None), dict) and st.export_infos:
+                    self.tile_export_info[tile_id] = st.export_infos
+                else:
+                    # Legacy single-export payload compatibility (no typed waveform map)
+                    self.tile_export_info[tile_id] = st.export_info
+
+                selected_export = self._resolve_selected_export_info(getattr(st, "export_infos", None), st.export_info)
+                self.latest_export_info = selected_export or st.export_info
                 try:
-                    st.last_export_raw = (st.export_info or {}).get("raw") or st.last_export_raw
+                    raw_candidate = (selected_export or st.export_info or {}).get("raw")
+                    st.last_export_raw = raw_candidate or st.last_export_raw
                 except Exception:
                     pass
             if "checklist" in payload:
@@ -891,15 +1096,21 @@ def create_app_class(BleCycleWorker, TileState):
             except Exception:
                 pass
             try:
-                # waveform KPI: show whether export is present
-                if st.export_info and (st.export_info.get("raw") or st.export_info.get("index")):
+                export_infos = getattr(st, "export_infos", None)
+                if isinstance(export_infos, dict) and export_infos:
+                    done = 0
+                    for value in export_infos.values():
+                        if isinstance(value, dict) and (value.get("raw") or value.get("index")):
+                            done += 1
+                    tile["waveform"].configure(text=f"Waveform: {done}/3")
+                elif st.export_info and (st.export_info.get("raw") or st.export_info.get("index")):
                     tile["waveform"].configure(text="Waveform: OK")
                 else:
                     tile["waveform"].configure(text="Waveform: •")
             except Exception:
                 pass
             try:
-                tile["export"].configure(text=self._format_export_compact(st.export_info))
+                tile["export"].configure(text=self._format_export_compact(getattr(st, "export_infos", None) or st.export_info))
             except Exception:
                 pass
     
@@ -951,7 +1162,8 @@ def create_app_class(BleCycleWorker, TileState):
                 self._update_demo_header_from_tile(tile, st)
     
                 # KPIs driven by structured info + rx_text only for display
-                demo_set_kpis_from_rx_text(self, st.rx_text or "", st.export_info if st.export_info else None)
+                selected_export = self._resolve_selected_export_info(getattr(st, "export_infos", None), st.export_info)
+                demo_set_kpis_from_rx_text(self, st.rx_text or "", selected_export if selected_export else None)
     
                 # Overalls: driven only by structured overall_values
                 if st.overall_values is not None:
@@ -962,21 +1174,8 @@ def create_app_class(BleCycleWorker, TileState):
                     except Exception:
                         self.demo_overall_var.set("•")
     
-                # Waveform: plot from export_info (raw .bin file), once per new raw file.
-                if st.export_info and isinstance(st.export_info, dict):
-                    raw_path = st.export_info.get("raw")
-                    if raw_path and raw_path != self._demo_last_plotted_raw:
-                        self._demo_last_plotted_raw = raw_path
-                        try:
-                            self.demo_plot_label.config(text="Rendering waveform...")
-                            demo_plot_waveform_from_raw_export(self, raw_path)
-                            self.demo_waveform_var.set("Waveform received")
-                        except Exception as e:
-                            self.demo_plot_label.config(text=f"(plot error: {type(e).__name__})")
-                            try:
-                                self._log("ERROR", f"Waveform plot failed: {e}")
-                            except Exception:
-                                pass
+                # Waveform: render selected waveform type when a new export arrives.
+                self._plot_selected_demo_waveform(st)
     
                 # Summary: show overall values + last RX text (human readable)
                 demo_render_summary(self, st.rx_text or "", st.overall_values)
